@@ -1,233 +1,149 @@
-// cube3d.c
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-
-#ifdef _WIN32
-#include <conio.h>
+// cube3d_windows.c
 #include <windows.h>
-#else
-#include <termios.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <time.h>
-#endif
+#include <math.h>
+#include <stdio.h>
 
-#define SCREEN_WIDTH 80
-#define SCREEN_HEIGHT 40
-#define DISTANCE 5.0
-#define CUBE_SIZE 1.0
+#define SCREEN_WIDTH  800
+#define SCREEN_HEIGHT 600
 
-// Cross-platform sleep function
-void sleep_ms(int milliseconds) {
-#ifdef _WIN32
-    Sleep(milliseconds);
-#else
-    usleep(milliseconds * 1000);
-#endif
-}
-
+// Cube vertices (8 corners)
 typedef struct {
     float x, y, z;
 } Vec3;
 
-typedef struct {
-    Vec3 vertices[8];
-    int edges[12][2];
-} Cube;
-
-// Cube vertices
-const Vec3 cubeVertices[] = {
-    {-1, -1, -1}, { 1, -1, -1}, { 1, -1,  1}, {-1, -1,  1}, // bottom face
-    {-1,  1, -1}, { 1,  1, -1}, { 1,  1,  1}, {-1,  1,  1}  // top face
+Vec3 cubeVertices[8] = {
+    {-1, -1, -1}, { 1, -1, -1},
+    { 1,  1, -1}, {-1,  1, -1},
+    {-1, -1,  1}, { 1, -1,  1},
+    { 1,  1,  1}, {-1,  1,  1}
 };
 
-// Cube edges (connecting vertices)
-const int cubeEdges[12][2] = {
-    {0,1}, {1,2}, {2,3}, {3,0}, // bottom face
-    {4,5}, {5,6}, {6,7}, {7,4}, // top face
-    {0,4}, {1,5}, {2,6}, {3,7}  // vertical edges
+// Edge connections (12 edges)
+int edges[12][2] = {
+    {0,1},{1,2},{2,3},{3,0},
+    {4,5},{5,6},{6,7},{7,4},
+    {0,4},{1,5},{2,6},{3,7}
 };
+
+// Projected 2D points (for current frame)
+POINT proj[8];
 
 // Rotation angles
-float angleX = 0, angleY = 0;
+float angleX = 0, angleY = 0, angleZ = 0;
 
-// Function to rotate a point around X and Y axes
-Vec3 rotatePoint(Vec3 p, float ax, float ay) {
-    Vec3 result;
-    float cosX = cos(ax), sinX = sin(ax);
-    float cosY = cos(ay), sinY = sin(ay);
+// THIS IS THE PART YOU'LL移植 TO YOUR OS
+// ======================================
+void rotateAndProject() {
+    float cosX = cos(angleX), sinX = sin(angleX);
+    float cosY = cos(angleY), sinY = sin(angleY);
+    float cosZ = cos(angleZ), sinZ = sin(angleZ);
     
-    // Rotate around X axis
-    float y1 = p.y * cosX - p.z * sinX;
-    float z1 = p.y * sinX + p.z * cosX;
+    int originX = SCREEN_WIDTH / 2;
+    int originY = SCREEN_HEIGHT / 2;
+    float focal = 500;
     
-    // Rotate around Y axis
-    result.x = p.x * cosY + z1 * sinY;
-    result.z = -p.x * sinY + z1 * cosY;
-    result.y = y1;
-    
-    return result;
-}
-
-// Project 3D point to 2D screen coordinates
-void projectPoint(Vec3 p, int *screenX, int *screenY, int *isVisible) {
-    // Perspective projection
-    float z = p.z + DISTANCE;
-    if (z > 0.1) {
-        float factor = DISTANCE / z;
-        *screenX = (int)(SCREEN_WIDTH / 2 + p.x * factor * SCREEN_WIDTH / 4);
-        *screenY = (int)(SCREEN_HEIGHT / 2 - p.y * factor * SCREEN_HEIGHT / 4);
-        *isVisible = 1;
-    } else {
-        *isVisible = 0;
-    }
-}
-
-// Draw line using Bresenham's algorithm
-void drawLine(int x1, int y1, int x2, int y2, char screen[SCREEN_HEIGHT][SCREEN_WIDTH]) {
-    int dx = abs(x2 - x1);
-    int dy = abs(y2 - y1);
-    int sx = x1 < x2 ? 1 : -1;
-    int sy = y1 < y2 ? 1 : -1;
-    int err = dx - dy;
-    int x = x1, y = y1;
-    
-    while (1) {
-        if (x >= 0 && x < SCREEN_WIDTH && y >= 0 && y < SCREEN_HEIGHT) {
-            screen[y][x] = '#';
-        }
-        if (x == x2 && y == y2) break;
-        int e2 = 2 * err;
-        if (e2 > -dy) { err -= dy; x += sx; }
-        if (e2 < dx) { err += dx; y += sy; }
-    }
-}
-
-// Clear screen
-void clearScreen() {
-#ifdef _WIN32
-    system("cls");
-#else
-    printf("\033[2J\033[1;1H");
-#endif
-}
-
-// Get keyboard input (non-blocking)
-int getKeyPress() {
-#ifdef _WIN32
-    if (_kbhit()) {
-        return _getch();
-    }
-    return 0;
-#else
-    struct termios oldt, newt;
-    int ch;
-    int oldf;
-    
-    tcgetattr(STDIN_FILENO, &oldt);
-    newt = oldt;
-    newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-    oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
-    fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
-    
-    ch = getchar();
-    
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    fcntl(STDIN_FILENO, F_SETFL, oldf);
-    
-    if (ch != EOF) {
-        return ch;
-    }
-    return 0;
-#endif
-}
-
-// Main function
-int main() {
-    Cube cube;
-    int running = 1;
-    int key;
-    
-    // Initialize cube
     for (int i = 0; i < 8; i++) {
-        cube.vertices[i] = cubeVertices[i];
+        float x = cubeVertices[i].x;
+        float y = cubeVertices[i].y;
+        float z = cubeVertices[i].z;
+        
+        // Rotate around X
+        float y1 = y * cosX - z * sinX;
+        float z1 = y * sinX + z * cosX;
+        
+        // Rotate around Y
+        float x2 = x * cosY + z1 * sinY;
+        float z2 = -x * sinY + z1 * cosY;
+        
+        // Rotate around Z
+        float x3 = x2 * cosZ - y1 * sinZ;
+        float y3 = x2 * sinZ + y1 * cosZ;
+        
+        // Perspective projection
+        float z3 = z2 + 3.0;
+        if (z3 > 0.1) {
+            proj[i].x = originX + (int)(focal * x3 / z3);
+            proj[i].y = originY - (int)(focal * y3 / z3);
+        }
     }
+}
+// ======================================
+// END OF PORTABLE SECTION
+
+// Windows-specific drawing (replace with your OS's drawing)
+void drawLine(HDC hdc, int x1, int y1, int x2, int y2) {
+    MoveToEx(hdc, x1, y1, NULL);
+    LineTo(hdc, x2, y2);
+}
+
+void drawCube(HDC hdc) {
+    HPEN pen = CreatePen(PS_SOLID, 2, RGB(0, 255, 0));
+    SelectObject(hdc, pen);
+    
     for (int i = 0; i < 12; i++) {
-        cube.edges[i][0] = cubeEdges[i][0];
-        cube.edges[i][1] = cubeEdges[i][1];
+        drawLine(hdc, proj[edges[i][0]].x, proj[edges[i][0]].y,
+                      proj[edges[i][1]].x, proj[edges[i][1]].y);
     }
     
-    clearScreen();
-    printf("3D Cube Rotation Demo\n");
-    printf("Use Arrow Keys to Rotate\n");
-    printf("Press ESC or Q to quit\n");
-    sleep_ms(2000);
+    DeleteObject(pen);
+}
+
+// Windows window procedure
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch(msg) {
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+            
+        case WM_KEYDOWN:
+            switch(wParam) {
+                case VK_UP:    angleX += 0.05; break;
+                case VK_DOWN:  angleX -= 0.05; break;
+                case VK_LEFT:  angleY -= 0.05; break;
+                case VK_RIGHT: angleY += 0.05; break;
+                case 'W':      angleX += 0.05; break;
+                case 'S':      angleX -= 0.05; break;
+                case 'A':      angleY -= 0.05; break;
+                case 'D':      angleY += 0.05; break;
+                case VK_ESCAPE: PostQuitMessage(0); break;
+            }
+            InvalidateRect(hwnd, NULL, TRUE);
+            return 0;
+    }
+    return DefWindowProc(hwnd, msg, wParam, lParam);
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
+                   LPSTR lpCmdLine, int nCmdShow) {
+    // Register window class
+    WNDCLASS wc = {0};
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.hbrBackground = (HBRUSH)(COLOR_BLACK+1);
+    wc.lpszClassName = "Cube3D";
+    RegisterClass(&wc);
     
-    while (running) {
-        // Check keyboard input
-        key = getKeyPress();
+    // Create window
+    HWND hwnd = CreateWindow("Cube3D", "3D Cube - Port to Your OS!",
+                             WS_OVERLAPPEDWINDOW,
+                             CW_USEDEFAULT, CW_USEDEFAULT,
+                             SCREEN_WIDTH, SCREEN_HEIGHT,
+                             NULL, NULL, hInstance, NULL);
+    
+    ShowWindow(hwnd, nCmdShow);
+    UpdateWindow(hwnd);
+    
+    // Message loop
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
         
-        // Handle arrow keys and WASD
-        if (key == 65 || key == 72 || key == 'w' || key == 'W') { // Up arrow or W
-            angleX += 0.05;
-        }
-        else if (key == 66 || key == 80 || key == 's' || key == 'S') { // Down arrow or S
-            angleX -= 0.05;
-        }
-        else if (key == 67 || key == 75 || key == 'a' || key == 'A') { // Left arrow or A
-            angleY -= 0.05;
-        }
-        else if (key == 68 || key == 77 || key == 'd' || key == 'D') { // Right arrow or D
-            angleY += 0.05;
-        }
-        else if (key == 27 || key == 'q' || key == 'Q') { // ESC or Q
-            running = 0;
-        }
-        
-        // Create screen buffer
-        char screen[SCREEN_HEIGHT][SCREEN_WIDTH];
-        for (int i = 0; i < SCREEN_HEIGHT; i++) {
-            for (int j = 0; j < SCREEN_WIDTH; j++) {
-                screen[i][j] = ' ';
-            }
-        }
-        
-        // Draw edges
-        for (int i = 0; i < 12; i++) {
-            // Get rotated vertices
-            Vec3 p1 = rotatePoint(cube.vertices[cube.edges[i][0]], angleX, angleY);
-            Vec3 p2 = rotatePoint(cube.vertices[cube.edges[i][1]], angleX, angleY);
-            
-            int x1, y1, x2, y2;
-            int v1, v2;
-            
-            projectPoint(p1, &x1, &y1, &v1);
-            projectPoint(p2, &x2, &y2, &v2);
-            
-            if (v1 && v2) {
-                drawLine(x1, y1, x2, y2, screen);
-            }
-        }
-        
-        // Render screen
-        clearScreen();
-        for (int i = 0; i < SCREEN_HEIGHT; i++) {
-            for (int j = 0; j < SCREEN_WIDTH; j++) {
-                putchar(screen[i][j]);
-            }
-            putchar('\n');
-        }
-        
-        // Add frame counter and instructions
-        printf("Angles: X=%.2f Y=%.2f | Use Arrows/WASD to rotate | Press Q to quit\n", 
-               angleX, angleY);
-        
-        sleep_ms(50); // ~20 FPS
+        // Update rotation
+        rotateAndProject();
+        InvalidateRect(hwnd, NULL, TRUE);
+        Sleep(16); // ~60 FPS
     }
     
-    clearScreen();
-    printf("Goodbye!\n");
-    return 0;
+    return msg.wParam;
 }
