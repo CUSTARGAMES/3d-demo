@@ -13,15 +13,19 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
+    - name: List files (debugging)
+      run: dir
+      shell: cmd
+    
     - name: Install MinGW GCC
       run: |
         choco install mingw -y
-        echo "C:\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        echo "C:\ProgramData\chocolatey\lib\mingw\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     
     - name: Verify GCC installation
       run: gcc --version
     
-    - name: Compile Windows EXE with MinGW
+    - name: Compile Windows EXE
       run: |
         gcc cube3d_windows.c -o cube3d.exe -lm -lgdi32 -mwindows -O2
     
