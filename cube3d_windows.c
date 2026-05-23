@@ -74,7 +74,7 @@ void drawLine(HDC hdc, int x1, int y1, int x2, int y2) {
     LineTo(hdc, x2, y2);
 }
 
-void drawCube(HDC hdc, HWND hwnd) {
+void drawCube(HDC hdc) {
     HPEN pen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
     HPEN oldPen = (HPEN)SelectObject(hdc, pen);
     
