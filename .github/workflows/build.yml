@@ -1,60 +1,26 @@
-name: Build 3D Cube
+name: Build Windows 3D Cube EXE
 
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build-windows-mingw:
+  build-windows-exe:
     runs-on: windows-latest
-    name: Build Windows EXE
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Install MinGW
+    - name: Compile Windows EXE
       run: |
-        choco install mingw -y --force
-        echo "C:\ProgramData\chocolatey\lib\mingw\tools\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        cl cube3d_windows.c /Fe:cube3d.exe user32.lib gdi32.lib
+      shell: cmd
     
-    - name: Verify GCC
-      run: gcc --version
-    
-    - name: Compile with GCC
-      run: |
-        gcc cube3d.c -o cube3d.exe -lm -Wall -Wextra -O2 -D_WIN32
-    
-    - name: Upload Windows executable
+    - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: cube3d-windows
+        name: cube3d-windows-exe
         path: cube3d.exe
-        retention-days: 30
-
-  build-linux:
-    runs-on: ubuntu-latest
-    name: Build Linux Binary
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc
-    
-    - name: Compile C program
-      run: |
-        gcc cube3d.c -o cube3d -lm -Wall -Wextra -O2
-    
-    - name: Upload Linux binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: cube3d-linux
-        path: cube3d
         retention-days: 30
