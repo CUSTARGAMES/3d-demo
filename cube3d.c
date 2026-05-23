@@ -25,14 +25,14 @@ int edges[12][2] = {
     {0,4},{1,5},{2,6},{3,7}
 };
 
-// Projected 2D points (for current frame)
+// Projected 2D points
 POINT proj[8];
 
 // Rotation angles
 float angleX = 0, angleY = 0, angleZ = 0;
+int running = 1;
 
-// THIS IS THE PART YOU'LL移植 TO YOUR OS
-// ======================================
+// PORTABLE 3D MATH - Copy this to your OS!
 void rotateAndProject() {
     float cosX = cos(angleX), sinX = sin(angleX);
     float cosY = cos(angleY), sinY = sin(angleY);
@@ -67,31 +67,31 @@ void rotateAndProject() {
         }
     }
 }
-// ======================================
-// END OF PORTABLE SECTION
 
-// Windows-specific drawing (replace with your OS's drawing)
+// Drawing functions (replace these for your OS)
 void drawLine(HDC hdc, int x1, int y1, int x2, int y2) {
     MoveToEx(hdc, x1, y1, NULL);
     LineTo(hdc, x2, y2);
 }
 
-void drawCube(HDC hdc) {
-    HPEN pen = CreatePen(PS_SOLID, 2, RGB(0, 255, 0));
-    SelectObject(hdc, pen);
+void drawCube(HDC hdc, HWND hwnd) {
+    HPEN pen = CreatePen(PS_SOLID, 3, RGB(0, 255, 0));
+    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
     
     for (int i = 0; i < 12; i++) {
         drawLine(hdc, proj[edges[i][0]].x, proj[edges[i][0]].y,
                       proj[edges[i][1]].x, proj[edges[i][1]].y);
     }
     
+    SelectObject(hdc, oldPen);
     DeleteObject(pen);
 }
 
-// Windows window procedure
+// Windows Window Procedure
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_DESTROY:
+            running = 0;
             PostQuitMessage(0);
             return 0;
             
@@ -105,7 +105,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 case 'S':      angleX -= 0.05; break;
                 case 'A':      angleY -= 0.05; break;
                 case 'D':      angleY += 0.05; break;
-                case VK_ESCAPE: PostQuitMessage(0); break;
+                case 'Q':
+                case VK_ESCAPE: 
+                    running = 0;
+                    PostQuitMessage(0);
+                    break;
             }
             InvalidateRect(hwnd, NULL, TRUE);
             return 0;
@@ -119,30 +123,36 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.hbrBackground = (HBRUSH)(COLOR_BLACK+1);
+    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     wc.lpszClassName = "Cube3D";
     RegisterClass(&wc);
     
     // Create window
-    HWND hwnd = CreateWindow("Cube3D", "3D Cube - Port to Your OS!",
-                             WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindow("Cube3D", "3D Cube - Portable Math - Use Arrow Keys/WASD",
+                             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                              CW_USEDEFAULT, CW_USEDEFAULT,
                              SCREEN_WIDTH, SCREEN_HEIGHT,
                              NULL, NULL, hInstance, NULL);
     
+    if (!hwnd) return 0;
+    
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
     
-    // Message loop
+    // Message loop with animation
     MSG msg;
-    while (GetMessage(&msg, NULL, 0, 0)) {
+    while (running && GetMessage(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
         
-        // Update rotation
+        // Update 3D projection
         rotateAndProject();
+        
+        // Force redraw
         InvalidateRect(hwnd, NULL, TRUE);
-        Sleep(16); // ~60 FPS
+        
+        // Control frame rate
+        Sleep(16);
     }
     
     return msg.wParam;
