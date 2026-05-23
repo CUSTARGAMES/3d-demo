@@ -10,7 +10,6 @@
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/select.h>
 #include <time.h>
 #endif
 
@@ -169,36 +168,22 @@ int main() {
     while (running) {
         // Check keyboard input
         key = getKeyPress();
-        switch (key) {
-            case 65: // Up arrow (Linux)
-            case 72: // Up arrow (Windows)
-            case 'w':
-            case 'W':
-                angleX += 0.05;
-                break;
-            case 66: // Down arrow (Linux)
-            case 80: // Down arrow (Windows)
-            case 's':
-            case 'S':
-                angleX -= 0.05;
-                break;
-            case 68: // Right arrow (Linux)
-            case 77: // Right arrow (Windows)
-            case 'd':
-            case 'D':
-                angleY += 0.05;
-                break;
-            case 67: // Left arrow (Linux)
-            case 75: // Left arrow (Windows)
-            case 'a':
-            case 'A':
-                angleY -= 0.05;
-                break;
-            case 27: // ESC
-            case 'q':
-            case 'Q':
-                running = 0;
-                break;
+        
+        // Handle arrow keys and WASD
+        if (key == 65 || key == 72 || key == 'w' || key == 'W') { // Up arrow or W
+            angleX += 0.05;
+        }
+        else if (key == 66 || key == 80 || key == 's' || key == 'S') { // Down arrow or S
+            angleX -= 0.05;
+        }
+        else if (key == 67 || key == 75 || key == 'a' || key == 'A') { // Left arrow or A
+            angleY -= 0.05;
+        }
+        else if (key == 68 || key == 77 || key == 'd' || key == 'D') { // Right arrow or D
+            angleY += 0.05;
+        }
+        else if (key == 27 || key == 'q' || key == 'Q') { // ESC or Q
+            running = 0;
         }
         
         // Create screen buffer
