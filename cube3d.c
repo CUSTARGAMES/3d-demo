@@ -10,12 +10,23 @@
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/select.h>
+#include <time.h>
 #endif
 
 #define SCREEN_WIDTH 80
 #define SCREEN_HEIGHT 40
 #define DISTANCE 5.0
 #define CUBE_SIZE 1.0
+
+// Cross-platform sleep function
+void sleep_ms(int milliseconds) {
+#ifdef _WIN32
+    Sleep(milliseconds);
+#else
+    usleep(milliseconds * 1000);
+#endif
+}
 
 typedef struct {
     float x, y, z;
@@ -149,34 +160,39 @@ int main() {
         cube.edges[i][1] = cubeEdges[i][1];
     }
     
+    clearScreen();
     printf("3D Cube Rotation Demo\n");
     printf("Use Arrow Keys to Rotate\n");
     printf("Press ESC or Q to quit\n");
-    Sleep(2000);
+    sleep_ms(2000);
     
     while (running) {
         // Check keyboard input
         key = getKeyPress();
         switch (key) {
-            case 72: // Up arrow
+            case 65: // Up arrow (Linux)
+            case 72: // Up arrow (Windows)
             case 'w':
             case 'W':
                 angleX += 0.05;
                 break;
-            case 80: // Down arrow
+            case 66: // Down arrow (Linux)
+            case 80: // Down arrow (Windows)
             case 's':
             case 'S':
                 angleX -= 0.05;
                 break;
-            case 75: // Left arrow
-            case 'a':
-            case 'A':
-                angleY -= 0.05;
-                break;
-            case 77: // Right arrow
+            case 68: // Right arrow (Linux)
+            case 77: // Right arrow (Windows)
             case 'd':
             case 'D':
                 angleY += 0.05;
+                break;
+            case 67: // Left arrow (Linux)
+            case 75: // Left arrow (Windows)
+            case 'a':
+            case 'A':
+                angleY -= 0.05;
                 break;
             case 27: // ESC
             case 'q':
@@ -223,7 +239,7 @@ int main() {
         printf("Angles: X=%.2f Y=%.2f | Use Arrows/WASD to rotate | Press Q to quit\n", 
                angleX, angleY);
         
-        Sleep(50); // ~20 FPS
+        sleep_ms(50); // ~20 FPS
     }
     
     clearScreen();
