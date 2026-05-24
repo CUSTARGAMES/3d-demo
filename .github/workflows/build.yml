@@ -1,0 +1,44 @@
+name: Build Raycaster
+
+on: [push, pull_request]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install SDL2
+      run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+    
+    - name: Compile
+      run: gcc -o raycaster main.c raycast.c -lSDL2 -lm -Wall
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: raycaster-linux
+        path: raycaster
+  
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2
+    
+    - name: Compile for Windows
+      shell: msys2 {0}
+      run: |
+        gcc -o raycaster.exe main.c raycast.c -lmingw32 -lSDL2main -lSDL2 -lm -Wall
+    
+    - name: Upload Windows artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: raycaster-windows
+        path: raycaster.exe
