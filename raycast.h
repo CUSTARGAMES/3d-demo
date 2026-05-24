@@ -1,6 +1,7 @@
 #ifndef RAYCAST_H
 #define RAYCAST_H
 
+#include <stdbool.h>
 #include <SDL2/SDL.h>
 
 #define SCREEN_WIDTH 1024
