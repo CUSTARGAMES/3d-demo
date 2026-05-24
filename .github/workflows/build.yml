@@ -1,27 +1,32 @@
-name: Build Raycaster for Windows
+name: Build DOOM Raycaster
 
 on: [push, workflow_dispatch]
 
 jobs:
-  build-windows:
+  build-windows-exe:
     runs-on: windows-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install SDL2 via vcpkg
+    - name: Download SDL2 for Windows
       run: |
-        vcpkg install sdl2:x64-windows
-        vcpkg integrate install
+        curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.30.0/SDL2-devel-2.30.0-mingw.tar.gz -o SDL2.tar.gz
+        tar -xzf SDL2.tar.gz
+        echo "SDL2 extracted successfully"
     
-    - name: Compile with MSVC
+    - name: Compile with GCC to create .exe
       run: |
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        cl /Fe:raycaster.exe main.c raycast.c /I"C:\vcpkg\installed\x64-windows\include" /link /LIBPATH:"C:\vcpkg\installed\x64-windows\lib" SDL2.lib SDL2main.lib shell32.lib user32.lib gdi32.lib winmm.lib /SUBSYSTEM:CONSOLE
+        gcc -o raycaster.exe main.c raycast.c -I./SDL2-2.30.0/x86_64-w64-mingw32/include -L./SDL2-2.30.0/x86_64-w64-mingw32/lib -lSDL2 -lm -Wall -O2
+    
+    - name: List files (verify .exe exists)
+      run: |
+        dir *.exe
+        echo "Build successful!"
     
     - name: Upload Windows executable
       uses: actions/upload-artifact@v4
       with:
-        name: raycaster-windows
+        name: doom-raycaster.exe
         path: raycaster.exe
         retention-days: 90
