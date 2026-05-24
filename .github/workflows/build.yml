@@ -3,57 +3,20 @@ name: Build Raycaster
 on: [push, workflow_dispatch]
 
 jobs:
-  build-linux:
+  build:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
     - name: Install SDL2
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libsdl2-dev pkg-config
+      run: sudo apt-get install -y libsdl2-dev
     
     - name: Compile
-      run: |
-        gcc -o raycaster main.c raycast.c `pkg-config --cflags --libs sdl2` -lm -Wall -O2
+      run: gcc -o raycaster main.c raycast.c -lSDL2 -lm
     
-    - name: List compiled files
-      run: ls -la
-    
-    - name: Upload artifact
+    - name: Upload executable
       uses: actions/upload-artifact@v4
       with:
-        name: raycaster-linux
+        name: raycaster-ubuntu
         path: raycaster
-        retention-days: 90
-
-  build-windows:
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup MSYS2
-      uses: msys2/setup-msys2@v2
-      with:
-        msystem: MINGW64
-        install: mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2
-        update: true
-    
-    - name: Compile with MSYS2
-      shell: msys2 {0}
-      run: |
-        cd ${{ github.workspace }}
-        gcc -o raycaster.exe main.c raycast.c -lmingw32 -lSDL2main -lSDL2 -lm -Wall -O2
-    
-    - name: List files
-      shell: cmd
-      run: dir
-    
-    - name: Upload Windows artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: raycaster-windows
-        path: raycaster.exe
-        retention-days: 90
