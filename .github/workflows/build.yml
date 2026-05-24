@@ -1,22 +1,27 @@
-name: Build Raycaster
+name: Build Raycaster for Windows
 
 on: [push, workflow_dispatch]
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install SDL2
-      run: sudo apt-get install -y libsdl2-dev
+    - name: Install SDL2 via vcpkg
+      run: |
+        vcpkg install sdl2:x64-windows
+        vcpkg integrate install
     
-    - name: Compile
-      run: gcc -o raycaster main.c raycast.c -lSDL2 -lm
+    - name: Compile with MSVC
+      run: |
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        cl /Fe:raycaster.exe main.c raycast.c /I"C:\vcpkg\installed\x64-windows\include" /link /LIBPATH:"C:\vcpkg\installed\x64-windows\lib" SDL2.lib SDL2main.lib shell32.lib user32.lib gdi32.lib winmm.lib /SUBSYSTEM:CONSOLE
     
-    - name: Upload executable
+    - name: Upload Windows executable
       uses: actions/upload-artifact@v4
       with:
-        name: raycaster
-        path: raycaster
+        name: raycaster-windows
+        path: raycaster.exe
+        retention-days: 90
