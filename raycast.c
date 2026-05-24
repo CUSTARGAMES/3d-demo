@@ -1,6 +1,7 @@
 #include "raycast.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 bool init_game(GameState* game) {
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
