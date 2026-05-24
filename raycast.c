@@ -14,12 +14,15 @@ bool init_game(GameState* game) {
     
     if (!game->window) {
         printf("Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        SDL_Quit();
         return false;
     }
     
     game->renderer = SDL_CreateRenderer(game->window, -1, SDL_RENDERER_ACCELERATED);
     if (!game->renderer) {
         printf("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
+        SDL_DestroyWindow(game->window);
+        SDL_Quit();
         return false;
     }
     
@@ -64,8 +67,12 @@ void handle_input(GameState* game) {
     const Uint8* keys = SDL_GetKeyboardState(NULL);
     double move_x = 0, move_y = 0;
     double rot = 0;
-    double frame_time = (SDL_GetTicks() - game->last_time) / 1000.0;
-    game->last_time = SDL_GetTicks();
+    Uint32 current_time = SDL_GetTicks();
+    double frame_time = (current_time - game->last_time) / 1000.0;
+    game->last_time = current_time;
+    
+    // Limit frame time to prevent huge jumps
+    if (frame_time > 0.1) frame_time = 0.1;
     
     if (keys[SDL_SCANCODE_W]) {
         move_x += game->player.dir_x * MOVE_SPEED * frame_time;
@@ -91,23 +98,28 @@ void handle_input(GameState* game) {
     int new_x = (int)(game->player.x + move_x);
     int new_y = (int)(game->player.y + move_y);
     
-    if (game->map[new_x][(int)game->player.y] == 0)
-        game->player.x += move_x;
-    if (game->map[(int)game->player.x][new_y] == 0)
-        game->player.y += move_y;
+    // Check bounds
+    if (new_x >= 0 && new_x < MAP_WIDTH && new_y >= 0 && new_y < MAP_HEIGHT) {
+        if (game->map[new_x][(int)game->player.y] == 0)
+            game->player.x += move_x;
+        if (game->map[(int)game->player.x][new_y] == 0)
+            game->player.y += move_y;
+    }
     
     // Rotation
-    double old_dir_x = game->player.dir_x;
-    game->player.dir_x = game->player.dir_x * cos(rot) - game->player.dir_y * sin(rot);
-    game->player.dir_y = old_dir_x * sin(rot) + game->player.dir_y * cos(rot);
-    
-    double old_plane_x = game->player.plane_x;
-    game->player.plane_x = game->player.plane_x * cos(rot) - game->player.plane_y * sin(rot);
-    game->player.plane_y = old_plane_x * sin(rot) + game->player.plane_y * cos(rot);
+    if (rot != 0) {
+        double old_dir_x = game->player.dir_x;
+        game->player.dir_x = game->player.dir_x * cos(rot) - game->player.dir_y * sin(rot);
+        game->player.dir_y = old_dir_x * sin(rot) + game->player.dir_y * cos(rot);
+        
+        double old_plane_x = game->player.plane_x;
+        game->player.plane_x = game->player.plane_x * cos(rot) - game->player.plane_y * sin(rot);
+        game->player.plane_y = old_plane_x * sin(rot) + game->player.plane_y * cos(rot);
+    }
 }
 
 void render(GameState* game) {
-    SDL_SetRenderDrawColor(game->renderer, 0, 0, 0, 255);
+    SDL_SetRenderDrawColor(game->renderer, 100, 100, 150, 255);
     SDL_RenderClear(game->renderer);
     
     // Raycasting
@@ -119,8 +131,9 @@ void render(GameState* game) {
         int map_x = (int)game->player.x;
         int map_y = (int)game->player.y;
         
-        double delta_dist_x = fabs(1 / ray_dir_x);
-        double delta_dist_y = fabs(1 / ray_dir_y);
+        // Avoid division by zero
+        double delta_dist_x = (ray_dir_x == 0) ? 1e30 : fabs(1.0 / ray_dir_x);
+        double delta_dist_y = (ray_dir_y == 0) ? 1e30 : fabs(1.0 / ray_dir_y);
         
         int step_x, step_y;
         double side_dist_x, side_dist_y;
@@ -154,6 +167,13 @@ void render(GameState* game) {
                 map_y += step_y;
                 side = 1;
             }
+            
+            // Check bounds
+            if (map_x < 0 || map_x >= MAP_WIDTH || map_y < 0 || map_y >= MAP_HEIGHT) {
+                hit = 1;
+                break;
+            }
+            
             if (game->map[map_x][map_y] > 0) hit = 1;
         }
         
@@ -163,18 +183,27 @@ void render(GameState* game) {
         else
             perp_wall_dist = (side_dist_y - delta_dist_y);
         
+        if (perp_wall_dist < 0.01) perp_wall_dist = 0.01;
+        
         int line_height = (int)(SCREEN_HEIGHT / perp_wall_dist);
         int draw_start = -line_height / 2 + SCREEN_HEIGHT / 2;
         if (draw_start < 0) draw_start = 0;
         int draw_end = line_height / 2 + SCREEN_HEIGHT / 2;
         if (draw_end >= SCREEN_HEIGHT) draw_end = SCREEN_HEIGHT - 1;
         
-        // Wall color based on side
+        // Wall color based on side and distance
+        int brightness = (int)(255 / (1 + perp_wall_dist * 0.5));
+        if (brightness > 255) brightness = 255;
+        
         int r, g, b;
-        if (side == 0) {
-            r = 255; g = 0; b = 0;  // Red for north/south walls
+        if (game->map[map_x][map_y] == 1) {
+            if (side == 0) {
+                r = brightness; g = brightness * 0.5; b = brightness * 0.5;
+            } else {
+                r = brightness * 0.5; g = brightness; b = brightness * 0.5;
+            }
         } else {
-            r = 0; g = 255; b = 0;  // Green for east/west walls
+            r = brightness; g = brightness; b = brightness;
         }
         
         SDL_SetRenderDrawColor(game->renderer, r, g, b, 255);
@@ -200,7 +229,7 @@ void game_loop(GameState* game) {
 }
 
 void cleanup_game(GameState* game) {
-    SDL_DestroyRenderer(game->renderer);
-    SDL_DestroyWindow(game->window);
+    if (game->renderer) SDL_DestroyRenderer(game->renderer);
+    if (game->window) SDL_DestroyWindow(game->window);
     SDL_Quit();
 }
