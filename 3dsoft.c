@@ -13,15 +13,14 @@
 // MATH
 // ============================================================================
 typedef struct { double x, y, z; } Vec3;
-typedef struct { Vec3 origin, direction; } Ray;
-typedef struct { Vec3 point, normal; double t; int hit; } Hit;
 
 Vec3 vec3(double x, double y, double z) { Vec3 v = {x, y, z}; return v; }
 Vec3 add(Vec3 a, Vec3 b) { return vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
 Vec3 sub(Vec3 a, Vec3 b) { return vec3(a.x-b.x, a.y-b.y, a.z-b.z); }
 Vec3 mul(Vec3 v, double s) { return vec3(v.x*s, v.y*s, v.z*s); }
 double dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-Vec3 normalize(Vec3 v) { double len = sqrt(dot(v,v)); return mul(v, 1.0/len); }
+Vec3 cross(Vec3 a, Vec3 b) { return vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
+Vec3 normalize(Vec3 v) { double len = sqrt(dot(v,v)); if(len<0.00001) return vec3(0,0,0); return mul(v, 1.0/len); }
 
 // ============================================================================
 // GLOBALS
@@ -45,13 +44,15 @@ Star g_stars[2000];
 int g_starCount = 2000;
 
 // ============================================================================
-// RAY TRACING FUNCTIONS (for the "R" render)
+// RAY TRACING FUNCTIONS
 // ============================================================================
-Hit sphereIntersect(Vec3 center, double radius, Ray ray) {
+typedef struct { Vec3 point, normal; double t; int hit; } Hit;
+
+Hit sphereIntersect(Vec3 center, double radius, Vec3 origin, Vec3 direction) {
     Hit hit = {0};
-    Vec3 oc = sub(ray.origin, center);
-    double a = dot(ray.direction, ray.direction);
-    double b = 2.0 * dot(oc, ray.direction);
+    Vec3 oc = sub(origin, center);
+    double a = dot(direction, direction);
+    double b = 2.0 * dot(oc, direction);
     double c = dot(oc, oc) - radius*radius;
     double disc = b*b - 4*a*c;
     
@@ -60,22 +61,22 @@ Hit sphereIntersect(Vec3 center, double radius, Ray ray) {
         if (t > 0.001) {
             hit.hit = 1;
             hit.t = t;
-            hit.point = add(ray.origin, mul(ray.direction, t));
+            hit.point = add(origin, mul(direction, t));
             hit.normal = normalize(sub(hit.point, center));
         }
     }
     return hit;
 }
 
-Hit planeIntersect(Vec3 point, Vec3 normal, Ray ray) {
+Hit planeIntersect(Vec3 point, Vec3 normal, Vec3 origin, Vec3 direction) {
     Hit hit = {0};
-    double denom = dot(normal, ray.direction);
+    double denom = dot(normal, direction);
     if (fabs(denom) > 1e-6) {
-        double t = dot(sub(point, ray.origin), normal) / denom;
+        double t = dot(sub(point, origin), normal) / denom;
         if (t > 0.001) {
             hit.hit = 1;
             hit.t = t;
-            hit.point = add(ray.origin, mul(ray.direction, t));
+            hit.point = add(origin, mul(direction, t));
             hit.normal = normal;
         }
     }
@@ -91,13 +92,13 @@ Vec3 checkerColor(Vec3 point) {
         return vec3(0.35, 0.28, 0.52);
 }
 
-Vec3 traceRay(Ray ray, int depth) {
+Vec3 traceRay(Vec3 origin, Vec3 direction, int depth) {
     if (depth > 5) return vec3(0,0,0);
     
     // Sphere intersection
-    Hit sphereHit = sphereIntersect(vec3(0, 1.2, 0), 1.25, ray);
+    Hit sphereHit = sphereIntersect(vec3(0, 1.2, 0), 1.25, origin, direction);
     // Floor intersection
-    Hit floorHit = planeIntersect(vec3(0, -0.2, 0), vec3(0, 1, 0), ray);
+    Hit floorHit = planeIntersect(vec3(0, -0.2, 0), vec3(0, 1, 0), origin, direction);
     
     Hit hit = {0};
     int hitSphere = 0;
@@ -111,17 +112,17 @@ Vec3 traceRay(Ray ray, int depth) {
     
     if (!hit.hit) {
         // Starry sky
-        double t = 0.5 * (ray.direction.y + 1.0);
+        double t = 0.5 * (direction.y + 1.0);
         return vec3(0.02 + t*0.01, 0.03 + t*0.02, 0.12 + t*0.08);
     }
     
     // Lighting
-    Vec3 lightPos = vec3(5 * sin(g_renderProgress*2), 8, 5 * cos(g_renderProgress*2));
+    double timeAngle = g_renderProgress * 6.28318;
+    Vec3 lightPos = vec3(5 * sin(timeAngle), 7, 5 * cos(timeAngle));
     Vec3 lightDir = normalize(sub(lightPos, hit.point));
     
     // Shadow ray
-    Ray shadowRay = {hit.point, lightDir};
-    Hit shadowHit = sphereIntersect(vec3(0, 1.2, 0), 1.25, shadowRay);
+    Hit shadowHit = sphereIntersect(vec3(0, 1.2, 0), 1.25, hit.point, lightDir);
     double shadowIntensity = (shadowHit.hit && shadowHit.t > 0.01) ? 0.3 : 1.0;
     
     double diff = fmax(0.1, dot(hit.normal, lightDir)) * shadowIntensity;
@@ -136,7 +137,7 @@ Vec3 traceRay(Ray ray, int depth) {
     Vec3 sphereColor = vec3(0.92, 0.88, 0.82);
     
     // Specular highlight
-    Vec3 viewDir = normalize(mul(ray.direction, -1));
+    Vec3 viewDir = normalize(mul(direction, -1));
     Vec3 reflectDir = normalize(sub(mul(lightDir, -1), mul(hit.normal, 2*dot(mul(lightDir, -1), hit.normal))));
     double spec = pow(fmax(0, dot(viewDir, reflectDir)), 128);
     Vec3 specular = mul(vec3(1.0, 0.95, 0.90), spec * 0.9 * shadowIntensity);
@@ -144,9 +145,9 @@ Vec3 traceRay(Ray ray, int depth) {
     // Base color
     Vec3 color = add(mul(sphereColor, diff * 0.85 + 0.15), specular);
     
-    // REFLECTION RAY (this makes it BLENDER-LEVEL shiny!)
-    Ray reflectRay = {hit.point, normalize(sub(ray.direction, mul(hit.normal, 2*dot(ray.direction, hit.normal))))};
-    Vec3 reflectColor = traceRay(reflectRay, depth + 1);
+    // REFLECTION RAY
+    Vec3 reflectRayDir = normalize(sub(direction, mul(hit.normal, 2*dot(direction, hit.normal))));
+    Vec3 reflectColor = traceRay(hit.point, reflectRayDir, depth + 1);
     color = add(color, mul(reflectColor, 0.55));
     
     // Rim lighting
@@ -160,14 +161,14 @@ void renderHighQuality() {
     g_rendering = 1;
     g_renderProgress = 0;
     
-    int renderWidth = 1920;
-    int renderHeight = 1080;
+    int renderWidth = 1280;
+    int renderHeight = 720;
     unsigned char* pixels = (unsigned char*)malloc(renderWidth * renderHeight * 3);
     
     // Camera position from current view
     Vec3 camPos = vec3(g_camX, g_camY, g_camZ);
-    Vec3 camDir = vec3(sin(g_camAngleX), sin(g_camAngleY), cos(g_camAngleX));
-    Vec3 camRight = normalize(vec3(-camDir.z, 0, camDir.x));
+    Vec3 camDir = normalize(vec3(sin(g_camAngleX), sin(g_camAngleY), cos(g_camAngleX)));
+    Vec3 camRight = normalize(cross(camDir, vec3(0, 1, 0)));
     Vec3 camUp = normalize(cross(camRight, camDir));
     
     double fov = 60.0 * 3.14159 / 180.0;
@@ -177,6 +178,12 @@ void renderHighQuality() {
         if (y % 50 == 0) {
             g_renderProgress = (double)y / renderHeight;
             InvalidateRect(g_hwnd, NULL, FALSE);
+            // Process messages during render
+            MSG msg;
+            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
         }
         
         for (int x = 0; x < renderWidth; x++) {
@@ -184,36 +191,42 @@ void renderHighQuality() {
             double v = (1.0 - 2.0 * y / renderHeight) * tan(fov/2);
             
             Vec3 rayDir = normalize(add(add(camDir, mul(camRight, u)), mul(camUp, v)));
-            Ray ray = {camPos, rayDir};
-            
-            Vec3 color = traceRay(ray, 0);
+            Vec3 color = traceRay(camPos, rayDir, 0);
             
             // Gamma correction
             color.x = pow(color.x, 1.0/2.2);
             color.y = pow(color.y, 1.0/2.2);
             color.z = pow(color.z, 1.0/2.2);
             
-            pixels[(y * renderWidth + x) * 3 + 0] = (unsigned char)(fmin(1.0, color.x) * 255);
-            pixels[(y * renderWidth + x) * 3 + 1] = (unsigned char)(fmin(1.0, color.y) * 255);
-            pixels[(y * renderWidth + x) * 3 + 2] = (unsigned char)(fmin(1.0, color.z) * 255);
+            // Clamp
+            if(color.x > 1) color.x = 1; if(color.x < 0) color.x = 0;
+            if(color.y > 1) color.y = 1; if(color.y < 0) color.y = 0;
+            if(color.z > 1) color.z = 1; if(color.z < 0) color.z = 0;
+            
+            pixels[(y * renderWidth + x) * 3 + 0] = (unsigned char)(color.x * 255);
+            pixels[(y * renderWidth + x) * 3 + 1] = (unsigned char)(color.y * 255);
+            pixels[(y * renderWidth + x) * 3 + 2] = (unsigned char)(color.z * 255);
         }
     }
     
     // Save as BMP
-    BITMAPINFO bmi = {0};
-    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bmi.bmiHeader.biWidth = renderWidth;
-    bmi.bmiHeader.biHeight = -renderHeight;
-    bmi.bmiHeader.biPlanes = 1;
-    bmi.bmiHeader.biBitCount = 24;
-    bmi.bmiHeader.biCompression = BI_RGB;
+    BITMAPFILEHEADER bf = {0};
+    BITMAPINFOHEADER bi = {0};
+    bi.biSize = sizeof(BITMAPINFOHEADER);
+    bi.biWidth = renderWidth;
+    bi.biHeight = renderHeight;
+    bi.biPlanes = 1;
+    bi.biBitCount = 24;
+    bi.biCompression = BI_RGB;
     
-    HDC hdcScreen = GetDC(NULL);
-    HBITMAP hBitmap = CreateDIBSection(hdcScreen, &bmi, DIB_RGB_COLORS, NULL, NULL, 0);
-    SetDIBits(hdcScreen, hBitmap, 0, renderHeight, pixels, &bmi, DIB_RGB_COLORS);
+    int rowSize = ((renderWidth * 24 + 31) / 32) * 4;
+    int imageSize = rowSize * renderHeight;
+    bf.bfType = 0x4D42;
+    bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    bf.bfSize = bf.bfOffBits + imageSize;
     
-    OPENFILENAME ofn = {0};
     char fileName[MAX_PATH] = "render_output.bmp";
+    OPENFILENAME ofn = {0};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = g_hwnd;
     ofn.lpstrFilter = "Bitmap Files\0*.bmp\0";
@@ -222,51 +235,34 @@ void renderHighQuality() {
     ofn.Flags = OFN_OVERWRITEPROMPT;
     
     if (GetSaveFileName(&ofn)) {
-        HBITMAP hBitmapCopy = (HBITMAP)CopyImage(hBitmap, IMAGE_BITMAP, 0, 0, LR_COPYRETURNORG);
-        HDC hdcMem = CreateCompatibleDC(hdcScreen);
-        SelectObject(hdcMem, hBitmapCopy);
-        
-        BITMAPFILEHEADER bf = {0};
-        BITMAPINFOHEADER bi = {0};
-        bi.biSize = sizeof(BITMAPINFOHEADER);
-        bi.biWidth = renderWidth;
-        bi.biHeight = renderHeight;
-        bi.biPlanes = 1;
-        bi.biBitCount = 24;
-        bi.biCompression = BI_RGB;
-        
-        DWORD dwSize = ((renderWidth * 24 + 31) / 32) * 4 * renderHeight;
-        bf.bfType = 0x4D42;
-        bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-        bf.bfSize = bf.bfOffBits + dwSize;
-        
         HANDLE hFile = CreateFile(ofn.lpstrFile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (hFile != INVALID_HANDLE_VALUE) {
             DWORD written;
             WriteFile(hFile, &bf, sizeof(bf), &written, NULL);
             WriteFile(hFile, &bi, sizeof(bi), &written, NULL);
             
-            BITMAP bitmap;
-            GetObject(hBitmapCopy, sizeof(BITMAP), &bitmap);
+            // Write pixels bottom-up
             for (int y = renderHeight-1; y >= 0; y--) {
-                WriteFile(hFile, (BYTE*)bitmap.bmBits + y * bitmap.bmWidthBytes, bitmap.bmWidthBytes, &written, NULL);
+                WriteFile(hFile, pixels + y * renderWidth * 3, renderWidth * 3, &written, NULL);
+                // Padding
+                if ((renderWidth * 3) % 4 != 0) {
+                    char pad[4] = {0};
+                    WriteFile(hFile, pad, 4 - (renderWidth * 3) % 4, &written, NULL);
+                }
             }
             CloseHandle(hFile);
             MessageBox(g_hwnd, "Render complete! Image saved.", "3DSOFT.RENDER", MB_OK);
         }
-        DeleteDC(hdcMem);
-        DeleteObject(hBitmapCopy);
     }
     
-    DeleteObject(hBitmap);
-    ReleaseDC(NULL, hdcScreen);
     free(pixels);
     g_rendering = 0;
+    g_renderProgress = 0;
     InvalidateRect(g_hwnd, NULL, FALSE);
 }
 
 // ============================================================================
-// REAL-TIME OPENGL DRAWING (for movement preview)
+// REAL-TIME OPENGL DRAWING
 // ============================================================================
 void drawCheckerFloorGL() {
     glBegin(GL_QUADS);
@@ -307,21 +303,21 @@ void drawSphereGL(float x, float y, float z, float radius) {
             float z2 = r2 * sin(theta);
             
             // Fake shiny lighting
-            float lightX = 3 * sin(lightAngle);
-            float lightZ = 3 * cos(lightAngle);
+            float lightX = 5 * sin(lightAngle);
+            float lightZ = 5 * cos(lightAngle);
             float nx = x1/radius, ny = y1/radius, nz = z1/radius;
             float diff = nx*lightX + ny*5 + nz*lightZ;
-            diff = (diff + 1) / 3;
-            if (diff < 0.2) diff = 0.2;
+            diff = (diff + 2) / 4;
+            if (diff < 0.3) diff = 0.3;
             
-            glColor3f(0.88f * diff, 0.85f * diff, 0.82f * diff);
+            glColor3f(0.92f * diff, 0.88f * diff, 0.82f * diff);
             glVertex3f(x + x1, y + y1, z + z1);
             
             nx = x2/radius; ny = y2/radius; nz = z2/radius;
             diff = nx*lightX + ny*5 + nz*lightZ;
-            diff = (diff + 1) / 3;
-            if (diff < 0.2) diff = 0.2;
-            glColor3f(0.88f * diff, 0.85f * diff, 0.82f * diff);
+            diff = (diff + 2) / 4;
+            if (diff < 0.3) diff = 0.3;
+            glColor3f(0.92f * diff, 0.88f * diff, 0.82f * diff);
             glVertex3f(x + x2, y + y2, z + z2);
         }
         glEnd();
@@ -333,7 +329,10 @@ void drawStarsGL() {
     glPointSize(1.2f);
     glBegin(GL_POINTS);
     for (int i = 0; i < g_starCount; i++) {
-        glColor3f(g_stars[i].bright, g_stars[i].bright*0.85f, g_stars[i].bright);
+        float twinkle = 0.6f + 0.4f * sin(g_renderProgress * 10 + i);
+        glColor3f(g_stars[i].bright * twinkle, 
+                  g_stars[i].bright * twinkle * 0.85f, 
+                  g_stars[i].bright * twinkle);
         glVertex3f(g_stars[i].x, g_stars[i].y, g_stars[i].z);
     }
     glEnd();
@@ -358,11 +357,12 @@ void renderPreview() {
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
-        gluOrtho2D(0, g_width, 0, g_height);
+        glOrtho(0, g_width, 0, g_height, -1, 1);
         glMatrixMode(GL_MODELVIEW);
         glPushMatrix();
         glLoadIdentity();
         
+        // Background
         glBegin(GL_QUADS);
         glColor3f(0, 0, 0);
         glVertex2f(g_width/2 - 300, g_height - 80);
@@ -370,21 +370,13 @@ void renderPreview() {
         glVertex2f(g_width/2 + 300, g_height - 60);
         glVertex2f(g_width/2 - 300, g_height - 60);
         
-        glColor3f(0.8f, 0.6f, 0.3f);
+        // Progress
+        glColor3f(0.9f, 0.6f, 0.2f);
         glVertex2f(g_width/2 - 298, g_height - 78);
         glVertex2f(g_width/2 - 298 + 596 * g_renderProgress, g_height - 78);
         glVertex2f(g_width/2 - 298 + 596 * g_renderProgress, g_height - 62);
         glVertex2f(g_width/2 - 298, g_height - 62);
         glEnd();
-        
-        glColor3f(1,1,1);
-        glRasterPos2f(g_width/2 - 150, g_height - 50);
-        char msg[64];
-        sprintf(msg, "RENDERING: %d%%", (int)(g_renderProgress * 100));
-        for(char* c = msg; *c; c++) {
-            wglUseFontBitmaps(wglGetCurrentDC(), *c, 1, 1000);
-            glCallLists(1, GL_UNSIGNED_BYTE, c);
-        }
         
         glPopMatrix();
         glMatrixMode(GL_PROJECTION);
@@ -434,7 +426,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_KEYDOWN:
             g_keys[wParam] = 1;
             if (wParam == VK_ESCAPE) PostQuitMessage(0);
-            if (wParam == 'R' && !g_rendering) {
+            if ((wParam == 'R' || wParam == 'r') && !g_rendering) {
                 CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)renderHighQuality, NULL, 0, NULL);
             }
             return 0;
@@ -459,8 +451,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 
                 RECT rect;
                 GetClientRect(hwnd, &rect);
+                POINT p = {rect.right/2, rect.bottom/2};
+                ClientToScreen(hwnd, &p);
                 if (x <= 10 || x >= rect.right-10 || y <= 10 || y >= rect.bottom-10) {
-                    SetCursorPos(rect.right/2, rect.bottom/2);
+                    SetCursorPos(p.x, p.y);
                     g_mouseX = rect.right/2;
                     g_mouseY = rect.bottom/2;
                 }
@@ -491,7 +485,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     RegisterClass(&wc);
     
     g_hwnd = CreateWindowEx(0, "RayTracer3D", 
-                            "3DSOFT.EXE | Move: WASD + Mouse | PRESS R TO RENDER PHOTOREALISTIC IMAGE",
+                            "3DSOFT.EXE | WASD + Mouse to move | PRESS R to render photorealistic image",
                             WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, g_width, g_height,
                             NULL, NULL, hInstance, NULL);
     
@@ -511,7 +505,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     glClearColor(0.02f, 0.02f, 0.08f, 1.0f);
     
     // Initialize stars
-    srand(time(NULL));
+    srand((unsigned int)time(NULL));
     for (int i = 0; i < g_starCount; i++) {
         g_stars[i].x = (rand() % 2000 - 1000) / 10.0f;
         g_stars[i].y = (rand() % 1000 - 500) / 10.0f;
@@ -519,7 +513,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         g_stars[i].bright = 0.3f + (rand() % 70) / 100.0f;
     }
     
-    SetCursorPos(g_width/2, g_height/2);
+    RECT rect;
+    GetClientRect(g_hwnd, &rect);
+    POINT p = {rect.right/2, rect.bottom/2};
+    ClientToScreen(g_hwnd, &p);
+    SetCursorPos(p.x, p.y);
     ShowCursor(FALSE);
     
     MSG msg;
