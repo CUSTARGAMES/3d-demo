@@ -1,32 +1,39 @@
-name: Build DOOM Raycaster
+name: Render Retro CGI Scene
 
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  build-windows-exe:
-    runs-on: windows-latest
+  render:
+    runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Download SDL2 for Windows
+    - name: Compile renderer
       run: |
-        curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.30.0/SDL2-devel-2.30.0-mingw.tar.gz -o SDL2.tar.gz
-        tar -xzf SDL2.tar.gz
-        echo "SDL2 extracted successfully"
+        gcc -o render render.c -lm -O3 -Wall
     
-    - name: Compile with GCC to create .exe
+    - name: Run renderer
       run: |
-        gcc -o raycaster.exe main.c raycast.c -I./SDL2-2.30.0/x86_64-w64-mingw32/include -L./SDL2-2.30.0/x86_64-w64-mingw32/lib -lSDL2 -lm -Wall -O2
+        ./render > output.ppm
     
-    - name: List files (verify .exe exists)
+    - name: Convert PPM to PNG (using ImageMagick)
       run: |
-        dir *.exe
-        echo "Build successful!"
+        sudo apt-get update
+        sudo apt-get install -y imagemagick
+        convert output.ppm output.png
     
-    - name: Upload Windows executable
+    - name: Upload image artifact
       uses: actions/upload-artifact@v4
       with:
-        name: doom-raycaster.exe
-        path: raycaster.exe
-        retention-days: 90
+        name: retro-cgi-scene
+        path: output.png
+    
+    - name: Upload PPM artifact (raw format)
+      uses: actions/upload-artifact@v4
+      with:
+        name: retro-cgi-scene-ppm
+        path: output.ppm
