@@ -1,269 +1,538 @@
-// render.c - Retro CGI: Shiny Sphere, Checker Floor & Starry Sky
-// Compile: gcc -o render render.c -lm -O3
-// Run: ./render > output.ppm
-// View: open output.ppm (on Mac) or use any image viewer
+// retro_cgi_interactive.cpp
+// Compile: g++ -o retro_cgi.exe retro_cgi_interactive.cpp -lglfw3 -lopengl32 -lgdi32 -lm
+// Requires: GLFW, GLEW (or glad), and stb_image.h
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
-#include <time.h>
-#include <float.h>
+#include <iostream>
+#include <cmath>
+#include <vector>
+#include <cstdlib>
+#include <ctime>
 
-#define WIDTH 800
-#define HEIGHT 600
-#define MAX_BOUNCES 8
-#define SAMPLES 4  // Anti-aliasing
+#define GLEW_STATIC
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
 
-typedef struct { double x, y, z; } Vec3;
-typedef struct { Vec3 origin, direction; } Ray;
-typedef struct { Vec3 hit_point, normal; double t; int hit; } Hit;
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
-// Vector operations
-Vec3 vec3(double x, double y, double z) { Vec3 v = {x, y, z}; return v; }
-Vec3 add(Vec3 a, Vec3 b) { return vec3(a.x + b.x, a.y + b.y, a.z + b.z); }
-Vec3 sub(Vec3 a, Vec3 b) { return vec3(a.x - b.x, a.y - b.y, a.z - b.z); }
-Vec3 mul(Vec3 v, double s) { return vec3(v.x * s, v.y * s, v.z * s); }
-Vec3 mul_v(Vec3 a, Vec3 b) { return vec3(a.x * b.x, a.y * b.y, a.z * b.z); }
-double dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
-Vec3 cross(Vec3 a, Vec3 b) { return vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
-Vec3 normalize(Vec3 v) { double len = sqrt(dot(v, v)); return mul(v, 1.0/len); }
-double length(Vec3 v) { return sqrt(dot(v, v)); }
+// Math structures
+struct Vec3 { float x, y, z; };
+struct Vec4 { float x, y, z, w; };
 
-// Random utilities
-double rand_double() { return (double)rand() / RAND_MAX; }
-Vec3 random_in_unit_sphere() {
-    Vec3 p;
-    do {
-        p = vec3(rand_double()*2 - 1, rand_double()*2 - 1, rand_double()*2 - 1);
-    } while (dot(p, p) >= 1.0);
-    return p;
+Vec3 vec3(float x, float y, float z) { return {x, y, z}; }
+Vec4 vec4(float x, float y, float z, float w) { return {x, y, z, w}; }
+
+// Camera controls
+struct Camera {
+    Vec3 pos = vec3(0, 2, 6);
+    Vec3 front = vec3(0, 0, -1);
+    Vec3 up = vec3(0, 1, 0);
+    float yaw = -90.0f;
+    float pitch = 0.0f;
+    float lastX = 400, lastY = 300;
+    bool firstMouse = true;
+    float speed = 5.0f;
+    float sensitivity = 0.1f;
+} cam;
+
+// Shader sources
+const char* vertexShaderSource = R"(
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+layout (location = 2) in vec2 aTexCoord;
+
+out vec3 FragPos;
+out vec3 Normal;
+out vec2 TexCoord;
+
+uniform mat4 model;
+uniform mat4 view;
+uniform mat4 projection;
+
+void main() {
+    FragPos = vec3(model * vec4(aPos, 1.0));
+    Normal = mat3(transpose(inverse(model))) * aNormal;
+    TexCoord = aTexCoord;
+    gl_Position = projection * view * vec4(FragPos, 1.0);
 }
+)";
 
-// Sphere intersection
-Hit sphere_intersect(Vec3 center, double radius, Ray ray, double t_min, double t_max) {
-    Hit hit = {0};
-    Vec3 oc = sub(ray.origin, center);
-    double a = dot(ray.direction, ray.direction);
-    double b = 2.0 * dot(oc, ray.direction);
-    double c = dot(oc, oc) - radius * radius;
-    double discriminant = b*b - 4*a*c;
+const char* fragmentShaderSource = R"(
+#version 330 core
+out vec4 FragColor;
+
+in vec3 FragPos;
+in vec3 Normal;
+in vec2 TexCoord;
+
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+uniform sampler2D texture1;
+uniform float time;
+uniform int isShiny;
+
+void main() {
+    vec3 objectColor = texture(texture1, TexCoord).rgb;
     
-    if (discriminant > 0) {
-        double sqrt_d = sqrt(discriminant);
-        double t = (-b - sqrt_d) / (2*a);
-        if (t < t_min) t = (-b + sqrt_d) / (2*a);
-        if (t >= t_min && t <= t_max) {
-            hit.hit = 1;
-            hit.t = t;
-            hit.hit_point = add(ray.origin, mul(ray.direction, t));
-            hit.normal = normalize(sub(hit.hit_point, center));
-            return hit;
+    // Ambient
+    float ambientStrength = 0.25;
+    vec3 ambient = ambientStrength * objectColor;
+    
+    // Diffuse
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * objectColor;
+    
+    // Specular (shiny!)
+    float specularStrength = isShiny == 1 ? 0.9 : 0.2;
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), isShiny == 1 ? 64 : 8);
+    vec3 specular = specularStrength * spec * vec3(1.0, 0.95, 0.9);
+    
+    // Rim lighting for shiny sphere
+    vec3 rimColor = vec3(0.6, 0.4, 0.3);
+    float rim = 1.0 - max(dot(viewDir, norm), 0.0);
+    rim = pow(rim, 2.5) * 0.5;
+    vec3 rimLight = rim * rimColor;
+    
+    vec3 result = ambient + diffuse + specular + rimLight;
+    FragColor = vec4(result, 1.0);
+}
+)";
+
+// Create checkerboard texture
+GLuint createCheckerTexture() {
+    int width = 512, height = 512;
+    unsigned char* data = (unsigned char*)malloc(width * height * 3);
+    
+    for (int i = 0; i < width; i++) {
+        for (int j = 0; j < height; j++) {
+            int x = (i / 64) % 2;
+            int y = (j / 64) % 2;
+            unsigned char r, g, b;
+            if ((x + y) % 2 == 0) {
+                r = 230; g = 220; b = 200; // light tile
+            } else {
+                r = 80; g = 70; b = 110;   // dark tile
+            }
+            data[(j * width + i) * 3 + 0] = r;
+            data[(j * width + i) * 3 + 1] = g;
+            data[(j * width + i) * 3 + 2] = b;
         }
     }
-    return hit;
+    
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    
+    free(data);
+    return texture;
 }
 
-// Plane intersection (for checker floor)
-Hit plane_intersect(Vec3 point, Vec3 normal, Ray ray, double t_min, double t_max) {
-    Hit hit = {0};
-    double denom = dot(normal, ray.direction);
-    if (fabs(denom) > 1e-6) {
-        Vec3 p0l = sub(point, ray.origin);
-        double t = dot(p0l, normal) / denom;
-        if (t >= t_min && t <= t_max) {
-            hit.hit = 1;
-            hit.t = t;
-            hit.hit_point = add(ray.origin, mul(ray.direction, t));
-            hit.normal = normal;
+// Create shiny environment texture for sphere
+GLuint createEnvTexture() {
+    int width = 512, height = 512;
+    unsigned char* data = (unsigned char*)malloc(width * height * 3);
+    
+    for (int i = 0; i < width; i++) {
+        for (int j = 0; j < height; j++) {
+            float u = (float)i / width;
+            float v = (float)j / height;
+            // Fake environment map: gradient + stars
+            unsigned char r = (unsigned char)(150 + 50 * sin(u * 20) * cos(v * 20));
+            unsigned char g = (unsigned char)(130 + 70 * sin(u * 15 + 2) * sin(v * 18));
+            unsigned char b = (unsigned char)(200 + 55 * cos(u * 25) * sin(v * 22));
+            
+            // Add some star-like specs
+            if ((int)(u * 50) % 13 == 7 && (int)(v * 50) % 17 == 5) {
+                r = 255; g = 255; b = 200;
+            }
+            
+            data[(j * width + i) * 3 + 0] = r;
+            data[(j * width + i) * 3 + 1] = g;
+            data[(j * width + i) * 3 + 2] = b;
         }
     }
-    return hit;
+    
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    free(data);
+    return texture;
 }
 
-// Checkerboard pattern for floor
-Vec3 checker_color(Vec3 point) {
-    int x = (int)floor(point.x * 2.0);
-    int z = (int)floor(point.z * 2.0);
-    if ((x + z) % 2 == 0)
-        return vec3(0.9, 0.9, 0.9);  // white tile
-    else
-        return vec3(0.3, 0.3, 0.5);  // dark blue-grey tile
-}
-
-// Starry sky background
-Vec3 sky_color(Ray ray) {
-    Vec3 dir = normalize(ray.direction);
-    double t = 0.5 * (dir.y + 1.0);
+// Create star field background (skybox)
+GLuint createStarTexture() {
+    int width = 1024, height = 1024;
+    unsigned char* data = (unsigned char*)malloc(width * height * 3);
     
-    // Gradient from dark blue to black
-    Vec3 sky_grad = add(vec3(0.02, 0.05, 0.15), mul(vec3(0.01, 0.02, 0.05), t));
-    
-    // Add stars using procedural noise based on direction
-    double star_intensity = 0.0;
-    // Simple star pattern using sin/cos of large numbers
-    double x = fabs(fmod(dir.x * 487.0 + dir.z * 391.0, 1.0));
-    double y = fabs(fmod(dir.y * 523.0 + dir.z * 317.0, 1.0));
-    double star_rand = fmod(x * y * 1000.0, 1.0);
-    
-    if (star_rand > 0.995 && dir.y > -0.3) {
-        star_intensity = 0.8 + rand_double() * 0.4;
-    } else if (star_rand > 0.99 && dir.y > -0.2) {
-        star_intensity = 0.4 + rand_double() * 0.3;
+    for (int i = 0; i < width; i++) {
+        for (int j = 0; j < height; j++) {
+            // Deep space gradient
+            float v = (float)j / height;
+            unsigned char r = (unsigned char)(10 + 20 * v);
+            unsigned char g = (unsigned char)(5 + 15 * v);
+            unsigned char b = (unsigned char)(30 + 40 * v);
+            
+            // Random stars
+            if ((rand() % 1000) > 995) {
+                r = 255; g = 255; b = 255;
+            } else if ((rand() % 1000) > 998) {
+                r = 255; g = 200; b = 150;
+            }
+            
+            data[(j * width + i) * 3 + 0] = r;
+            data[(j * width + i) * 3 + 1] = g;
+            data[(j * width + i) * 3 + 2] = b;
+        }
     }
     
-    return add(sky_grad, vec3(star_intensity, star_intensity * 0.9, star_intensity));
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    
+    free(data);
+    return texture;
 }
 
-// Reflection calculation
-Vec3 reflect(Vec3 v, Vec3 n) {
-    return sub(v, mul(n, 2.0 * dot(v, n)));
+// Build sphere mesh (normals + tex coords)
+void generateSphere(std::vector<float>& vertices, std::vector<unsigned int>& indices, float radius, int rings, int sectors) {
+    float const R = 1.0f / (float)(rings - 1);
+    float const S = 1.0f / (float)(sectors - 1);
+    
+    for (int r = 0; r < rings; r++) {
+        for (int s = 0; s < sectors; s++) {
+            float y = sin(-M_PI_2 + M_PI * r * R);
+            float x = cos(2 * M_PI * s * S) * sin(M_PI * r * R);
+            float z = sin(2 * M_PI * s * S) * sin(M_PI * r * R);
+            
+            vertices.push_back(x * radius);
+            vertices.push_back(y * radius);
+            vertices.push_back(z * radius);
+            
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+            
+            vertices.push_back(s * S);
+            vertices.push_back(r * R);
+        }
+    }
+    
+    for (int r = 0; r < rings - 1; r++) {
+        for (int s = 0; s < sectors - 1; s++) {
+            indices.push_back(r * sectors + s);
+            indices.push_back((r + 1) * sectors + s);
+            indices.push_back((r + 1) * sectors + (s + 1));
+            
+            indices.push_back(r * sectors + s);
+            indices.push_back((r + 1) * sectors + (s + 1));
+            indices.push_back(r * sectors + (s + 1));
+        }
+    }
 }
 
-// Scene intersection (returns closest hit)
-Hit scene_intersect(Ray ray, double t_min, double t_max) {
-    Hit closest = {0};
-    closest.t = t_max;
-    closest.hit = 0;
+// Build floor plane
+void generateFloor(std::vector<float>& vertices, std::vector<unsigned int>& indices) {
+    float size = 15.0f;
+    float y = -0.2f;
     
-    // Sphere at (0, 1.2, 0) radius 1.2
-    Hit sphere_hit = sphere_intersect(vec3(0, 1.2, 0), 1.2, ray, t_min, t_max);
-    if (sphere_hit.hit && sphere_hit.t < closest.t) {
-        closest = sphere_hit;
-        closest.normal = sphere_hit.normal;
-    }
+    vertices = {
+        -size, y, -size,   0, 1, 0,   0, 0,
+         size, y, -size,   0, 1, 0,   size, 0,
+         size, y,  size,   0, 1, 0,   size, size,
+        -size, y,  size,   0, 1, 0,   0, size
+    };
     
-    // Floor plane at y = -0.2
-    Hit floor_hit = plane_intersect(vec3(0, -0.2, 0), vec3(0, 1, 0), ray, t_min, t_max);
-    if (floor_hit.hit && floor_hit.t < closest.t) {
-        closest = floor_hit;
-    }
-    
-    return closest;
+    indices = {0, 1, 2,  0, 2, 3};
 }
 
-// Ray tracing color function
-Vec3 trace_ray(Ray ray, int depth) {
-    if (depth >= MAX_BOUNCES) return vec3(0, 0, 0);
+// Compile shader
+GLuint compileShader(const char* source, GLenum type) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
     
-    Hit hit = scene_intersect(ray, 0.001, 1e6);
-    
-    if (!hit.hit) {
-        return sky_color(ray);
+    int success;
+    char infoLog[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(shader, 512, NULL, infoLog);
+        std::cout << "Shader compilation failed: " << infoLog << std::endl;
     }
-    
-    // Hit the floor
-    if (fabs(hit.normal.y - 1.0) < 0.001 && hit.hit_point.y < 0) {
-        Vec3 floor_color = checker_color(hit.hit_point);
-        
-        // Add simple lighting
-        Vec3 light_pos = vec3(5, 8, 3);
-        Vec3 light_dir = normalize(sub(light_pos, hit.hit_point));
-        double diff = fmax(0.2, dot(hit.normal, light_dir));
-        
-        // Ambient + diffuse
-        Vec3 ambient = mul(floor_color, 0.25);
-        Vec3 diffuse = mul(floor_color, diff * 0.9);
-        
-        return add(ambient, diffuse);
-    }
-    
-    // Hit the shiny sphere
-    Vec3 sphere_color = vec3(0.95, 0.92, 0.88);
-    
-    // Lighting calculation
-    Vec3 light_pos = vec3(5, 8, 3);
-    Vec3 light_dir = normalize(sub(light_pos, hit.hit_point));
-    
-    // Check shadow
-    Ray shadow_ray = {hit.hit_point, light_dir};
-    Hit shadow_hit = scene_intersect(shadow_ray, 0.01, length(sub(light_pos, hit.hit_point)));
-    double shadow_intensity = shadow_hit.hit ? 0.35 : 1.0;
-    
-    // Diffuse lighting
-    double diff = fmax(0.1, dot(hit.normal, light_dir)) * shadow_intensity;
-    
-    // Specular highlight (phong)
-    Vec3 view_dir = normalize(mul(ray.direction, -1));
-    Vec3 reflect_dir = reflect(mul(light_dir, -1), hit.normal);
-    double spec = pow(fmax(0, dot(view_dir, reflect_dir)), 64);
-    Vec3 specular = mul(vec3(1.0, 0.95, 0.9), spec * 0.9 * shadow_intensity);
-    
-    // Ambient + diffuse + specular
-    Vec3 ambient = mul(sphere_color, 0.18);
-    Vec3 diffuse = mul(sphere_color, diff * 0.85);
-    
-    Vec3 color = add(add(ambient, diffuse), specular);
-    
-    // Add reflection (shiny!)
-    Ray reflect_ray = {hit.hit_point, reflect(ray.direction, hit.normal)};
-    Vec3 reflect_color = trace_ray(reflect_ray, depth + 1);
-    color = add(color, mul(reflect_color, 0.55));
-    
-    // Add subtle rim lighting
-    Vec3 rim_light = vec3(0.6, 0.4, 0.3);
-    double rim = pow(1 - fmax(0, dot(view_dir, hit.normal)), 3);
-    color = add(color, mul(rim_light, rim * 0.35));
-    
-    return color;
+    return shader;
 }
 
-// Camera: generate ray for pixel (x, y)
-Ray get_ray(int x, int y, double u, double v) {
-    double aspect = (double)WIDTH / HEIGHT;
-    double fov = M_PI / 3.0;  // 60 degrees
+GLuint createShaderProgram() {
+    GLuint vertexShader = compileShader(vertexShaderSource, GL_VERTEX_SHADER);
+    GLuint fragmentShader = compileShader(fragmentShaderSource, GL_FRAGMENT_SHADER);
     
-    double px = (2.0 * ((x + u) / WIDTH) - 1.0) * tan(fov / 2.0) * aspect;
-    double py = (1.0 - 2.0 * ((y + v) / HEIGHT)) * tan(fov / 2.0);
-    double pz = -1.0;
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vertexShader);
+    glAttachShader(program, fragmentShader);
+    glLinkProgram(program);
     
-    Vec3 direction = normalize(vec3(px, py, pz));
-    Ray ray = {vec3(0, 1.2, 3.5), direction};
-    return ray;
+    int success;
+    char infoLog[512];
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(program, 512, NULL, infoLog);
+        std::cout << "Program linking failed: " << infoLog << std::endl;
+    }
+    
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+    
+    return program;
+}
+
+// Mouse callback
+void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    if (cam.firstMouse) {
+        cam.lastX = xpos;
+        cam.lastY = ypos;
+        cam.firstMouse = false;
+    }
+    
+    float xoffset = xpos - cam.lastX;
+    float yoffset = cam.lastY - ypos;
+    cam.lastX = xpos;
+    cam.lastY = ypos;
+    
+    xoffset *= cam.sensitivity;
+    yoffset *= cam.sensitivity;
+    
+    cam.yaw += xoffset;
+    cam.pitch += yoffset;
+    
+    if (cam.pitch > 89.0f) cam.pitch = 89.0f;
+    if (cam.pitch < -89.0f) cam.pitch = -89.0f;
+    
+    cam.front.x = cos(cam.yaw * M_PI / 180) * cos(cam.pitch * M_PI / 180);
+    cam.front.y = sin(cam.pitch * M_PI / 180);
+    cam.front.z = sin(cam.yaw * M_PI / 180) * cos(cam.pitch * M_PI / 180);
+    cam.front = vec3(cam.front.x, cam.front.y, cam.front.z);
+}
+
+// Keyboard input
+void processInput(GLFWwindow* window, float deltaTime) {
+    float speed = cam.speed * deltaTime;
+    
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        cam.pos = vec3(cam.pos.x + cam.front.x * speed, cam.pos.y + cam.front.y * speed, cam.pos.z + cam.front.z * speed);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        cam.pos = vec3(cam.pos.x - cam.front.x * speed, cam.pos.y - cam.front.y * speed, cam.pos.z - cam.front.z * speed);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+        Vec3 right = {cam.front.z, 0, -cam.front.x};
+        cam.pos = vec3(cam.pos.x - right.x * speed, cam.pos.y, cam.pos.z - right.z * speed);
+    }
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+        Vec3 right = {cam.front.z, 0, -cam.front.x};
+        cam.pos = vec3(cam.pos.x + right.x * speed, cam.pos.y, cam.pos.z + right.z * speed);
+    }
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+        cam.pos.y += speed;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+        cam.pos.y -= speed;
 }
 
 int main() {
-    printf("P3\n%d %d\n255\n", WIDTH, HEIGHT);
-    
     srand(time(NULL));
     
-    // Progress indicator
-    fprintf(stderr, "Rendering retro CGI scene...\n");
-    fprintf(stderr, "  Shiny sphere | Checker floor | Starry sky\n");
-    
-    for (int y = 0; y < HEIGHT; y++) {
-        if (y % 50 == 0) {
-            fprintf(stderr, "  Progress: %.1f%%\n", (double)y / HEIGHT * 100);
-        }
-        
-        for (int x = 0; x < WIDTH; x++) {
-            Vec3 color = {0, 0, 0};
-            
-            // Anti-aliasing with random subpixel samples
-            for (int s = 0; s < SAMPLES; s++) {
-                double u = (double)rand() / RAND_MAX;
-                double v = (double)rand() / RAND_MAX;
-                Ray ray = get_ray(x, y, u, v);
-                Vec3 sample_color = trace_ray(ray, 0);
-                color = add(color, sample_color);
-            }
-            
-            // Average samples
-            color = mul(color, 1.0 / SAMPLES);
-            
-            // Gamma correction
-            color.x = pow(color.x, 1.0/2.2);
-            color.y = pow(color.y, 1.0/2.2);
-            color.z = pow(color.z, 1.0/2.2);
-            
-            // Clamp and output
-            int r = (int)(fmin(1.0, fmax(0.0, color.x)) * 255);
-            int g = (int)(fmin(1.0, fmax(0.0, color.y)) * 255);
-            int b = (int)(fmin(1.0, fmax(0.0, color.z)) * 255);
-            
-            printf("%d %d %d\n", r, g, b);
-        }
+    // Initialize GLFW
+    if (!glfwInit()) {
+        std::cout << "Failed to initialize GLFW" << std::endl;
+        return -1;
     }
     
-    fprintf(stderr, "Complete! Image saved to stdout.\n");
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+    
+    GLFWwindow* window = glfwCreateWindow(1024, 768, "Retro CGI - Shiny Sphere | Checker Floor | Starry Sky", NULL, NULL);
+    if (!window) {
+        std::cout << "Failed to create window" << std::endl;
+        glfwTerminate();
+        return -1;
+    }
+    
+    glfwMakeContextCurrent(window);
+    glfwSetCursorPosCallback(window, mouseCallback);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        std::cout << "Failed to initialize GLEW" << std::endl;
+        return -1;
+    }
+    
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    // Create textures
+    GLuint checkerTex = createCheckerTexture();
+    GLuint envTex = createEnvTexture();
+    GLuint starTex = createStarTexture();
+    
+    // Create sphere
+    std::vector<float> sphereVerts;
+    std::vector<unsigned int> sphereIndices;
+    generateSphere(sphereVerts, sphereIndices, 1.2f, 64, 64);
+    
+    GLuint sphereVAO, sphereVBO, sphereEBO;
+    glGenVertexArrays(1, &sphereVAO);
+    glGenBuffers(1, &sphereVBO);
+    glGenBuffers(1, &sphereEBO);
+    
+    glBindVertexArray(sphereVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, sphereVBO);
+    glBufferData(GL_ARRAY_BUFFER, sphereVerts.size() * sizeof(float), sphereVerts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sphereIndices.size() * sizeof(unsigned int), sphereIndices.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    
+    // Create floor
+    std::vector<float> floorVerts;
+    std::vector<unsigned int> floorIndices;
+    generateFloor(floorVerts, floorIndices);
+    
+    GLuint floorVAO, floorVBO, floorEBO;
+    glGenVertexArrays(1, &floorVAO);
+    glGenBuffers(1, &floorVBO);
+    glGenBuffers(1, &floorEBO);
+    
+    glBindVertexArray(floorVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, floorVBO);
+    glBufferData(GL_ARRAY_BUFFER, floorVerts.size() * sizeof(float), floorVerts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, floorEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, floorIndices.size() * sizeof(unsigned int), floorIndices.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+    
+    // Create shader program
+    GLuint shaderProgram = createShaderProgram();
+    
+    // Set up projection
+    glm::mat4 projection = glm::perspective(glm::radians(45.0f), 1024.0f / 768.0f, 0.1f, 100.0f);
+    
+    float lastFrame = 0.0f;
+    float time = 0.0f;
+    
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  RETRO CGI INTERACTIVE DEMO" << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "  Controls:" << std::endl;
+    std::cout << "    WASD  - Move around" << std::endl;
+    std::cout << "    Mouse  - Look around" << std::endl;
+    std::cout << "    SPACE  - Fly up" << std::endl;
+    std::cout << "    L-SHIFT - Fly down" << std::endl;
+    std::cout << "    ESC    - Exit" << std::endl;
+    std::cout << "========================================\n" << std::endl;
+    
+    // Main loop
+    while (!glfwWindowShouldClose(window)) {
+        float currentFrame = glfwGetTime();
+        float deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+        time += deltaTime;
+        
+        processInput(window, deltaTime);
+        
+        glClearColor(0.02f, 0.02f, 0.08f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        
+        glUseProgram(shaderProgram);
+        
+        // Set uniforms
+        GLint modelLoc = glGetUniformLocation(shaderProgram, "model");
+        GLint viewLoc = glGetUniformLocation(shaderProgram, "view");
+        GLint projLoc = glGetUniformLocation(shaderProgram, "projection");
+        GLint lightPosLoc = glGetUniformLocation(shaderProgram, "lightPos");
+        GLint viewPosLoc = glGetUniformLocation(shaderProgram, "viewPos");
+        GLint timeLoc = glGetUniformLocation(shaderProgram, "time");
+        GLint isShinyLoc = glGetUniformLocation(shaderProgram, "isShiny");
+        
+        // Animate light position
+        Vec3 lightPos = vec3(5 * sin(time * 0.5f), 6 + sin(time * 0.7f) * 2, 5 * cos(time * 0.5f));
+        
+        // View matrix from camera
+        Vec3 center = vec3(cam.pos.x + cam.front.x, cam.pos.y + cam.front.y, cam.pos.z + cam.front.z);
+        glm::mat4 view = glm::lookAt(glm::vec3(cam.pos.x, cam.pos.y, cam.pos.z), 
+                                      glm::vec3(center.x, center.y, center.z), 
+                                      glm::vec3(0, 1, 0));
+        
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, &view[0][0]);
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, &projection[0][0]);
+        glUniform3f(lightPosLoc, lightPos.x, lightPos.y, lightPos.z);
+        glUniform3f(viewPosLoc, cam.pos.x, cam.pos.y, cam.pos.z);
+        glUniform1f(timeLoc, time);
+        
+        // Draw sphere (shiny)
+        glUniform1i(isShinyLoc, 1);
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, glm::vec3(0, 1.2f, 0));
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &model[0][0]);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, envTex);
+        glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
+        glBindVertexArray(sphereVAO);
+        glDrawElements(GL_TRIANGLES, sphereIndices.size(), GL_UNSIGNED_INT, 0);
+        
+        // Draw floor (checker)
+        glUniform1i(isShinyLoc, 0);
+        model = glm::mat4(1.0f);
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &model[0][0]);
+        glBindTexture(GL_TEXTURE_2D, checkerTex);
+        glBindVertexArray(floorVAO);
+        glDrawElements(GL_TRIANGLES, floorIndices.size(), GL_UNSIGNED_INT, 0);
+        
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+        
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+            glfwSetWindowShouldClose(window, true);
+    }
+    
+    glDeleteVertexArrays(1, &sphereVAO);
+    glDeleteBuffers(1, &sphereVBO);
+    glDeleteVertexArrays(1, &floorVAO);
+    glDeleteBuffers(1, &floorVBO);
+    glDeleteProgram(shaderProgram);
+    
+    glfwTerminate();
     return 0;
 }
