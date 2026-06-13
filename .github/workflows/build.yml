@@ -12,17 +12,14 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create source file
+    - name: Install GCC
       run: |
-        # Copy the entire 3dsoft.c code into the runner
-        curl -o 3dsoft.c https://raw.githubusercontent.com/your-repo/3dsoft.c
+        choco install mingw -y
+        echo "C:\mingw64\bin" >> $env:GITHUB_PATH
     
-    - name: Setup MSVC
-      uses: ilammy/msvc-dev-cmd@v1
-    
-    - name: Compile
+    - name: Compile with GCC
       run: |
-        cl 3dsoft.c /Fe:3dsoft.exe /link opengl32.lib glu32.lib user32.lib gdi32.lib kernel32.lib /SUBSYSTEM:WINDOWS
+        gcc -o 3dsoft.exe 3dsoft.c -lopengl32 -lglu32 -lm -mwindows
     
     - name: Upload EXE
       uses: actions/upload-artifact@v4
