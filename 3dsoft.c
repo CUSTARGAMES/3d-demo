@@ -1,30 +1,17 @@
-// 3dsoft.c - Complete retro CGI renderer with interactive 3D view
-// Compile: cl 3dsoft.c /Fe:3dsoft.exe /link opengl32.lib glu32.lib user32.lib gdi32.lib kernel32.lib /SUBSYSTEM:WINDOWS
-// Or with gcc: gcc -o 3dsoft.exe 3dsoft.c -lopengl32 -lglu32 -lm
+// 3dsoft.c - Retro CGI Renderer with Shiny Sphere, Checker Floor & Starry Sky
+// Compile: gcc -o 3dsoft.exe 3dsoft.c -lopengl32 -lglu32 -lm -mwindows
 
 #include <windows.h>
 #include <GL/gl.h>
 #include <GL/glu.h>
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-// ============================================================================
-// MATH UTILITIES
-// ============================================================================
+// Simple vector math
 typedef struct { float x, y, z; } vec3;
 
-vec3 vec3_add(vec3 a, vec3 b) { return (vec3){a.x+b.x, a.y+b.y, a.z+b.z}; }
-vec3 vec3_sub(vec3 a, vec3 b) { return (vec3){a.x-b.x, a.y-b.y, a.z-b.z}; }
-vec3 vec3_mul(vec3 v, float s) { return (vec3){v.x*s, v.y*s, v.z*s}; }
-float vec3_dot(vec3 a, vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-vec3 vec3_normalize(vec3 v) { float len = sqrt(vec3_dot(v,v)); return vec3_mul(v, 1.0f/len); }
-vec3 vec3_cross(vec3 a, vec3 b) { return (vec3){a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x}; }
-
-// ============================================================================
-// GLOBALS
-// ============================================================================
+// Global variables
 HWND g_hwnd;
 HDC g_hdc;
 HGLRC g_hrc;
@@ -35,11 +22,11 @@ float g_lightAngle = 0.0f;
 float g_camX = 0, g_camY = 1.5f, g_camZ = 6.0f;
 float g_camAngleX = 0, g_camAngleY = 0.3f;
 int g_keys[256] = {0};
-int g_mouseX = g_width/2, g_mouseY = g_height/2;
+int g_mouseX = 512, g_mouseY = 384;
 int g_firstMouse = 1;
 float g_time = 0;
 
-// Starfield data
+// Star data
 typedef struct { float x, y, z; float brightness; } Star;
 Star g_stars[1500];
 int g_starCount = 1500;
@@ -47,11 +34,8 @@ int g_starCount = 1500;
 // Particle data
 typedef struct { float x, y, z; float vx, vy, vz; } Particle;
 Particle g_particles[300];
-int g_particleCount = 300;
 
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
+// Initialize stars
 void initStars() {
     srand((unsigned int)time(NULL));
     for (int i = 0; i < g_starCount; i++) {
@@ -62,8 +46,9 @@ void initStars() {
     }
 }
 
+// Initialize particles
 void initParticles() {
-    for (int i = 0; i < g_particleCount; i++) {
+    for (int i = 0; i < 300; i++) {
         g_particles[i].x = (rand() % 600 - 300) / 50.0f;
         g_particles[i].y = (rand() % 400) / 50.0f;
         g_particles[i].z = (rand() % 600 - 300) / 50.0f;
@@ -73,9 +58,7 @@ void initParticles() {
     }
 }
 
-// ============================================================================
-// DRAWING FUNCTIONS
-// ============================================================================
+// Draw checkerboard floor
 void drawCheckerFloor() {
     glBegin(GL_QUADS);
     for (int i = -12; i < 12; i++) {
@@ -85,33 +68,34 @@ void drawCheckerFloor() {
             else
                 glColor3f(0.28f, 0.22f, 0.42f);
             
-            glVertex3f(i, -0.2f, j);
-            glVertex3f(i+1, -0.2f, j);
-            glVertex3f(i+1, -0.2f, j+1);
-            glVertex3f(i, -0.2f, j+1);
+            glVertex3f((float)i, -0.2f, (float)j);
+            glVertex3f((float)i+1, -0.2f, (float)j);
+            glVertex3f((float)i+1, -0.2f, (float)j+1);
+            glVertex3f((float)i, -0.2f, (float)j+1);
         }
     }
     glEnd();
     
-    // Add subtle grid lines
+    // Grid lines
     glColor3f(0.5f, 0.4f, 0.6f);
     glBegin(GL_LINES);
     for (int i = -12; i <= 12; i++) {
-        glVertex3f(i, -0.19f, -12);
-        glVertex3f(i, -0.19f, 12);
-        glVertex3f(-12, -0.19f, i);
-        glVertex3f(12, -0.19f, i);
+        glVertex3f((float)i, -0.19f, -12.0f);
+        glVertex3f((float)i, -0.19f, 12.0f);
+        glVertex3f(-12.0f, -0.19f, (float)i);
+        glVertex3f(12.0f, -0.19f, (float)i);
     }
     glEnd();
 }
 
+// Draw shiny sphere
 void drawShinySphere(float x, float y, float z, float radius) {
     const int slices = 80;
     const int stacks = 80;
     
     for (int i = 0; i < stacks; i++) {
-        float phi1 = M_PI * i / stacks;
-        float phi2 = M_PI * (i+1) / stacks;
+        float phi1 = 3.14159f * i / stacks;
+        float phi2 = 3.14159f * (i+1) / stacks;
         float y1 = radius * cos(phi1);
         float y2 = radius * cos(phi2);
         float r1 = radius * sin(phi1);
@@ -119,42 +103,47 @@ void drawShinySphere(float x, float y, float z, float radius) {
         
         glBegin(GL_QUAD_STRIP);
         for (int j = 0; j <= slices; j++) {
-            float theta = 2 * M_PI * j / slices;
+            float theta = 2 * 3.14159f * j / slices;
             float x1 = r1 * cos(theta);
             float z1 = r1 * sin(theta);
             float x2 = r2 * cos(theta);
             float z2 = r2 * sin(theta);
             
-            vec3 norm1 = vec3_normalize((vec3){x1, y1, z1});
-            vec3 norm2 = vec3_normalize((vec3){x2, y2, z2});
+            // Lighting calculation
+            vec3 lightDir;
+            lightDir.x = 5 * sin(g_lightAngle);
+            lightDir.y = 8 + sin(g_lightAngle*2);
+            lightDir.z = 5 * cos(g_lightAngle);
+            float len = sqrt(lightDir.x*lightDir.x + lightDir.y*lightDir.y + lightDir.z*lightDir.z);
+            lightDir.x /= len; lightDir.y /= len; lightDir.z /= len;
             
-            vec3 lightDir = vec3_normalize((vec3){5 * sin(g_lightAngle), 8 + sin(g_lightAngle)*2, 5 * cos(g_lightAngle)});
-            float diff1 = fmax(0.15f, vec3_dot(norm1, lightDir));
-            float diff2 = fmax(0.15f, vec3_dot(norm2, lightDir));
+            // Normals
+            vec3 norm1, norm2;
+            norm1.x = x1; norm1.y = y1; norm1.z = z1;
+            norm2.x = x2; norm2.y = y2; norm2.z = z2;
+            len = sqrt(norm1.x*norm1.x + norm1.y*norm1.y + norm1.z*norm1.z);
+            norm1.x /= len; norm1.y /= len; norm1.z /= len;
+            len = sqrt(norm2.x*norm2.x + norm2.y*norm2.y + norm2.z*norm2.z);
+            norm2.x /= len; norm2.y /= len; norm2.z /= len;
             
-            // Shiny metallic with rim lighting
+            float diff1 = norm1.x*lightDir.x + norm1.y*lightDir.y + norm1.z*lightDir.z;
+            float diff2 = norm2.x*lightDir.x + norm2.y*lightDir.y + norm2.z*lightDir.z;
+            if (diff1 < 0.15f) diff1 = 0.15f;
+            if (diff2 < 0.15f) diff2 = 0.15f;
+            
             float shine = 0.85f + 0.15f * sin(g_rotation * 3);
-            float spec1 = pow(fmax(0, vec3_dot(norm1, lightDir)), 32) * 0.8f;
-            float spec2 = pow(fmax(0, vec3_dot(norm2, lightDir)), 32) * 0.8f;
             
-            float r1c = 0.88f * diff1 + spec1;
-            float g1c = 0.85f * diff1 + spec1 * 0.9f;
-            float b1c = 0.82f * diff1 + spec1 * 0.7f;
-            
-            float r2c = 0.88f * diff2 + spec2;
-            float g2c = 0.85f * diff2 + spec2 * 0.9f;
-            float b2c = 0.82f * diff2 + spec2 * 0.7f;
-            
-            glColor3f(r1c * shine, g1c * shine, b1c * shine);
+            glColor3f(0.88f * diff1 * shine, 0.85f * diff1 * shine, 0.82f * diff1 * shine);
             glVertex3f(x + x1, y + y1, z + z1);
             
-            glColor3f(r2c * shine, g2c * shine, b2c * shine);
+            glColor3f(0.88f * diff2 * shine, 0.85f * diff2 * shine, 0.82f * diff2 * shine);
             glVertex3f(x + x2, y + y2, z + z2);
         }
         glEnd();
     }
 }
 
+// Draw stars
 void drawStars() {
     glDisable(GL_DEPTH_TEST);
     glPointSize(1.2f);
@@ -170,17 +159,16 @@ void drawStars() {
     glEnable(GL_DEPTH_TEST);
 }
 
+// Draw floating particles
 void drawFloatingParticles() {
     glDisable(GL_LIGHTING);
     glPointSize(2.5f);
     glBegin(GL_POINTS);
-    for (int i = 0; i < g_particleCount; i++) {
-        // Update particle positions
+    for (int i = 0; i < 300; i++) {
         g_particles[i].x += g_particles[i].vx;
         g_particles[i].y += g_particles[i].vy;
         g_particles[i].z += g_particles[i].vz;
         
-        // Wrap around
         if (g_particles[i].x > 8) g_particles[i].x = -8;
         if (g_particles[i].x < -8) g_particles[i].x = 8;
         if (g_particles[i].y > 5) g_particles[i].y = 0;
@@ -196,9 +184,7 @@ void drawFloatingParticles() {
     glEnable(GL_LIGHTING);
 }
 
-// ============================================================================
-// INPUT HANDLING
-// ============================================================================
+// Handle keyboard input
 void handleInput() {
     float speed = 0.08f;
     if (g_keys['W'] || g_keys['w']) {
@@ -225,14 +211,12 @@ void handleInput() {
     }
 }
 
-// ============================================================================
-// RENDERING
-// ============================================================================
+// Render scene
 void renderScene() {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glLoadIdentity();
     
-    // Camera setup
+    // Camera
     gluLookAt(g_camX, g_camY, g_camZ,
               g_camX + sin(g_camAngleX), g_camY + sin(g_camAngleY), g_camZ + cos(g_camAngleX),
               0, 1, 0);
@@ -246,7 +230,7 @@ void renderScene() {
     glLightfv(GL_LIGHT0, GL_DIFFUSE, lightColor);
     glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmbient);
     
-    // Draw everything
+    // Draw
     drawStars();
     drawFloatingParticles();
     drawShinySphere(0, 1.2f, 0, 1.25f);
@@ -258,9 +242,7 @@ void renderScene() {
     SwapBuffers(g_hdc);
 }
 
-// ============================================================================
-// OPENGL SETUP
-// ============================================================================
+// Setup OpenGL
 void initGL() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_LIGHTING);
@@ -279,9 +261,7 @@ void initGL() {
     glMatrixMode(GL_MODELVIEW);
 }
 
-// ============================================================================
-// WINDOW PROCEDURE
-// ============================================================================
+// Window procedure
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_DESTROY:
@@ -332,22 +312,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-// ============================================================================
-// MAIN ENTRY POINT
-// ============================================================================
+// Main entry point
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     // Register window class
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = "RetroCGI3DSoft";
+    wc.lpszClassName = "RetroCGI";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     RegisterClass(&wc);
     
     // Create window
-    g_hwnd = CreateWindowEx(0, "RetroCGI3DSoft", 
-                            "3DSOFT.EXE - Retro CGI Renderer | Shiny Sphere | Checker Floor | Starry Sky",
+    g_hwnd = CreateWindowEx(0, "RetroCGI", 
+                            "3DSOFT.EXE - Retro CGI | Shiny Sphere | Checker Floor | Starry Sky",
                             WS_OVERLAPPEDWINDOW | WS_VISIBLE, 
                             100, 100, g_width, g_height,
                             NULL, NULL, hInstance, NULL);
@@ -367,27 +344,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     g_hrc = wglCreateContext(g_hdc);
     wglMakeCurrent(g_hdc, g_hrc);
     
-    // Initialize scene
+    // Initialize
     initGL();
     initStars();
     initParticles();
     
-    // Hide cursor and center it
+    // Hide cursor
     SetCursorPos(g_width/2, g_height/2);
     ShowCursor(FALSE);
-    
-    // Print instructions to debug output
-    OutputDebugStringA("\n========================================\n");
-    OutputDebugStringA("  3DSOFT.EXE - Retro CGI Renderer\n");
-    OutputDebugStringA("========================================\n");
-    OutputDebugStringA("  Controls:\n");
-    OutputDebugStringA("    WASD     - Move around\n");
-    OutputDebugStringA("    Mouse    - Look around\n");
-    OutputDebugStringA("    SPACE    - Fly up\n");
-    OutputDebugStringA("    SHIFT    - Fly down\n");
-    OutputDebugStringA("    R        - Reset camera\n");
-    OutputDebugStringA("    ESC      - Exit\n");
-    OutputDebugStringA("========================================\n\n");
     
     // Message loop
     MSG msg;
@@ -404,7 +368,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         handleInput();
         renderScene();
-        Sleep(16); // ~60 FPS
+        Sleep(16);
     }
     
     return 0;
