@@ -1,4 +1,4 @@
-name: Render Retro CGI Scene
+name: Build Retro CGI EXE
 
 on:
   push:
@@ -6,34 +6,26 @@ on:
   workflow_dispatch:
 
 jobs:
-  render:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: windows-latest
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Compile renderer
+    - name: Create render.c
       run: |
-        gcc -o render render.c -lm -O3 -Wall
+        # Paste the entire C code above into render.c
+        echo "// Paste the code here" > render.c
     
-    - name: Run renderer
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+    
+    - name: Compile
       run: |
-        ./render > output.ppm
+        cl render.c /Fe:retro_cgi.exe /link opengl32.lib glu32.lib user32.lib gdi32.lib
     
-    - name: Convert PPM to PNG (using ImageMagick)
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y imagemagick
-        convert output.ppm output.png
-    
-    - name: Upload image artifact
+    - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: retro-cgi-scene
-        path: output.png
-    
-    - name: Upload PPM artifact (raw format)
-      uses: actions/upload-artifact@v4
-      with:
-        name: retro-cgi-scene-ppm
-        path: output.ppm
+        name: retro-cgi.exe
+        path: retro_cgi.exe
