@@ -1,4 +1,4 @@
-name: Build Retro CGI EXE
+name: Build 3DSoft.exe
 
 on:
   push:
@@ -12,20 +12,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Create render.c
+    - name: Create source file
       run: |
-        # Paste the entire C code above into render.c
-        echo "// Paste the code here" > render.c
+        # Copy the entire 3dsoft.c code into the runner
+        curl -o 3dsoft.c https://raw.githubusercontent.com/your-repo/3dsoft.c
     
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
     
     - name: Compile
       run: |
-        cl render.c /Fe:retro_cgi.exe /link opengl32.lib glu32.lib user32.lib gdi32.lib
+        cl 3dsoft.c /Fe:3dsoft.exe /link opengl32.lib glu32.lib user32.lib gdi32.lib kernel32.lib /SUBSYSTEM:WINDOWS
     
     - name: Upload EXE
       uses: actions/upload-artifact@v4
       with:
-        name: retro-cgi.exe
-        path: retro_cgi.exe
+        name: 3dsoft
+        path: 3dsoft.exe
