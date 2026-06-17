@@ -1,4 +1,4 @@
-// phoix_editor.c - Phoix 3D Editor (Pure C, 640x480, 256 colors VGA)
+// phoix_editor.c - Phoix 3D Editor (All-in-One)
 // Compile: gcc -o phoix_editor.exe phoix_editor.c -lopengl32 -lglu32 -lgdi32 -lm -mwindows -O3
 
 #include <windows.h>
@@ -15,19 +15,30 @@
 // ============================================================================
 typedef struct { unsigned char r, g, b; } RGBColor;
 
-RGBColor VGA_PALETTE[256] = {
-    {0,0,0}, {0,0,170}, {0,170,0}, {0,170,170},
-    {170,0,0}, {170,0,170}, {170,85,0}, {170,170,170},
-    {85,85,85}, {85,85,255}, {85,255,85}, {85,255,255},
-    {255,85,85}, {255,85,255}, {255,255,85}, {255,255,255}
-};
+RGBColor VGA_PALETTE[256];
 
 void initVGAPalette() {
+    // First 16 VGA colors
+    RGBColor defaultColors[16] = {
+        {0,0,0}, {0,0,170}, {0,170,0}, {0,170,170},
+        {170,0,0}, {170,0,170}, {170,85,0}, {170,170,170},
+        {85,85,85}, {85,85,255}, {85,255,85}, {85,255,255},
+        {255,85,85}, {255,85,255}, {255,255,85}, {255,255,255}
+    };
+    
+    for(int i = 0; i < 16; i++) {
+        VGA_PALETTE[i] = defaultColors[i];
+    }
+    
+    // 6x6x6 color cube (216 colors)
     int idx = 16;
     for(int r = 0; r < 6 && idx < 256; r++) {
         for(int g = 0; g < 6 && idx < 256; g++) {
             for(int b = 0; b < 6 && idx < 256; b++) {
-                VGA_PALETTE[idx++] = {r*51, g*51, b*51};
+                VGA_PALETTE[idx].r = r * 51;
+                VGA_PALETTE[idx].g = g * 51;
+                VGA_PALETTE[idx].b = b * 51;
+                idx++;
             }
         }
     }
@@ -71,46 +82,37 @@ double length(Vec3 v) { return sqrt(dot(v,v)); }
 // SCENE DATA
 // ============================================================================
 #define MAX_OBJECTS 100
-#define MAX_TRIANGLES 10000
 
 typedef struct {
     Vec3 pos;
     Vec3 color;
-    float metalness;
-    float roughness;
+    double metalness;
+    double roughness;
 } Sphere;
 
 typedef struct {
-    Vec3 v0, v1, v2;
-    Vec3 normal;
-    Vec3 color;
-} Triangle;
-
-typedef struct {
     Vec3 pos;
     Vec3 color;
-    float intensity;
+    double intensity;
 } Light;
 
 typedef struct {
     Vec3 position;
     Vec3 target;
-    float fov;
+    double fov;
 } Camera;
 
 static Sphere g_spheres[MAX_OBJECTS];
 static int g_sphereCount = 0;
-static Triangle g_triangles[MAX_TRIANGLES];
-static int g_triangleCount = 0;
 static Light g_lights[MAX_OBJECTS];
 static int g_lightCount = 0;
-static Camera g_camera = {{0, 1.5, 6}, {0, 1.2, 0}, 60};
+static Camera g_camera = {{0, 1.5, 6}, {0, 1.2, 0}, 60.0};
 static unsigned char* g_frameBuffer = NULL;
 static int g_rendering = 0;
-static float g_renderProgress = 0;
-static unsigned char* g_skyboxData = NULL;
-static int g_skyboxWidth = 0;
-static int g_skyboxHeight = 0;
+static double g_renderProgress = 0;
+static int g_renderWidth = 640;
+static int g_renderHeight = 480;
+static int g_highQuality = 0;
 
 // ============================================================================
 // RAY TRACING ENGINE
@@ -217,8 +219,11 @@ void renderScene() {
     g_rendering = 1;
     g_renderProgress = 0;
     
+    int width = g_highQuality ? 1280 : 640;
+    int height = g_highQuality ? 720 : 480;
+    
     if(!g_frameBuffer) {
-        g_frameBuffer = (unsigned char*)malloc(640 * 480 * 3);
+        g_frameBuffer = (unsigned char*)malloc(width * height * 3);
     }
     
     Vec3 camPos = g_camera.position;
@@ -228,33 +233,84 @@ void renderScene() {
     Vec3 camUp = normalize(cross(camRight, camDir));
     
     double fovRad = g_camera.fov * 3.14159 / 180.0;
-    double aspect = 640.0 / 480.0;
+    double aspect = (double)width / height;
     
-    for(int y = 0; y < 480; y++) {
+    for(int y = 0; y < height; y++) {
         if(y % 50 == 0) {
-            g_renderProgress = (float)y / 480;
+            g_renderProgress = (double)y / height;
             InvalidateRect(GetForegroundWindow(), NULL, FALSE);
         }
         
-        for(int x = 0; x < 640; x++) {
-            double u = (2.0 * x / 640 - 1.0) * tan(fovRad/2) * aspect;
-            double v = (1.0 - 2.0 * y / 480) * tan(fovRad/2);
+        for(int x = 0; x < width; x++) {
+            double u = (2.0 * x / width - 1.0) * tan(fovRad/2) * aspect;
+            double v = (1.0 - 2.0 * y / height) * tan(fovRad/2);
             
             Vec3 rayDir = normalize(add(add(camDir, mul(camRight, u)), mul(camUp, v)));
             Vec3 color = traceRay(camPos, rayDir, 0);
             
-            if(color.x > 1) color.x = 1; if(color.x < 0) color.x = 0;
-            if(color.y > 1) color.y = 1; if(color.y < 0) color.y = 0;
-            if(color.z > 1) color.z = 1; if(color.z < 0) color.z = 0;
+            if(color.x > 1.0) color.x = 1.0;
+            if(color.x < 0.0) color.x = 0.0;
+            if(color.y > 1.0) color.y = 1.0;
+            if(color.y < 0.0) color.y = 0.0;
+            if(color.z > 1.0) color.z = 1.0;
+            if(color.z < 0.0) color.z = 0.0;
             
-            g_frameBuffer[(y * 640 + x) * 3 + 0] = (unsigned char)(color.x * 255);
-            g_frameBuffer[(y * 640 + x) * 3 + 1] = (unsigned char)(color.y * 255);
-            g_frameBuffer[(y * 640 + x) * 3 + 2] = (unsigned char)(color.z * 255);
+            g_frameBuffer[(y * width + x) * 3 + 0] = (unsigned char)(color.x * 255);
+            g_frameBuffer[(y * width + x) * 3 + 1] = (unsigned char)(color.y * 255);
+            g_frameBuffer[(y * width + x) * 3 + 2] = (unsigned char)(color.z * 255);
         }
     }
     
     g_rendering = 0;
+    g_renderWidth = width;
+    g_renderHeight = height;
     InvalidateRect(GetForegroundWindow(), NULL, FALSE);
+}
+
+void saveRender() {
+    if(!g_frameBuffer) return;
+    
+    char fileName[MAX_PATH] = "phoix_render.bmp";
+    OPENFILENAME ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = GetForegroundWindow();
+    ofn.lpstrFilter = "Bitmap Files\0*.bmp\0";
+    ofn.lpstrFile = fileName;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_OVERWRITEPROMPT;
+    
+    if(GetSaveFileName(&ofn)) {
+        BITMAPFILEHEADER bf = {0};
+        BITMAPINFOHEADER bi = {0};
+        bi.biSize = sizeof(BITMAPINFOHEADER);
+        bi.biWidth = g_renderWidth;
+        bi.biHeight = g_renderHeight;
+        bi.biPlanes = 1;
+        bi.biBitCount = 24;
+        bi.biCompression = BI_RGB;
+        
+        bf.bfType = 0x4D42;
+        bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        bf.bfSize = bf.bfOffBits + ((g_renderWidth * 3 + 3) & ~3) * g_renderHeight;
+        
+        HANDLE hFile = CreateFile(fileName, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if(hFile != INVALID_HANDLE_VALUE) {
+            DWORD written;
+            WriteFile(hFile, &bf, sizeof(bf), &written, NULL);
+            WriteFile(hFile, &bi, sizeof(bi), &written, NULL);
+            
+            for(int y = g_renderHeight-1; y >= 0; y--) {
+                WriteFile(hFile, g_frameBuffer + y * g_renderWidth * 3, g_renderWidth * 3, &written, NULL);
+                int padding = (4 - (g_renderWidth * 3) % 4) % 4;
+                if(padding) {
+                    char pad[4] = {0};
+                    WriteFile(hFile, pad, padding, &written, NULL);
+                }
+            }
+            CloseHandle(hFile);
+            MessageBox(GetForegroundWindow(), "Render saved successfully!", "Phoix Editor", MB_OK);
+        }
+    }
 }
 
 // ============================================================================
@@ -264,7 +320,8 @@ HWND g_hwnd;
 HDC g_hdc;
 int g_width = 640;
 int g_height = 480;
-float g_camAngleX = 0, g_camAngleY = 0.3f;
+double g_camAngleX = 0, g_camAngleY = 0.3f;
+double g_camDist = 6.0f;
 int g_mouseX = 320, g_mouseY = 240;
 int g_firstMouse = 1;
 int g_keys[256] = {0};
@@ -273,14 +330,25 @@ int g_dragging = 0;
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch(msg) {
         case WM_DESTROY:
+            if(g_frameBuffer) free(g_frameBuffer);
             PostQuitMessage(0);
             return 0;
         case WM_KEYDOWN:
             g_keys[wParam] = 1;
             if(wParam == VK_ESCAPE) PostQuitMessage(0);
-            if(wParam == 'R') {
+            if(wParam == 'R' || wParam == 'r') {
+                g_highQuality = 1;
+                renderScene();
+            }
+            if(wParam == 'S' || wParam == 's') {
+                saveRender();
+            }
+            if(wParam == 'F' || wParam == 'f') {
+                // Reset camera
                 g_camera.position = vec3(0, 1.5, 6);
                 g_camera.target = vec3(0, 1.2, 0);
+                g_camAngleX = 0;
+                g_camAngleY = 0.3f;
                 renderScene();
             }
             return 0;
@@ -299,10 +367,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 if(g_camAngleY > 1.4f) g_camAngleY = 1.4f;
                 if(g_camAngleY < -0.8f) g_camAngleY = -0.8f;
                 
-                float dist = length(sub(g_camera.position, g_camera.target));
-                g_camera.position.x = g_camera.target.x + dist * sin(g_camAngleX) * cos(g_camAngleY);
-                g_camera.position.y = g_camera.target.y + dist * sin(g_camAngleY);
-                g_camera.position.z = g_camera.target.z + dist * cos(g_camAngleX) * cos(g_camAngleY);
+                g_camera.position.x = g_camera.target.x + g_camDist * sin(g_camAngleX) * cos(g_camAngleY);
+                g_camera.position.y = g_camera.target.y + g_camDist * sin(g_camAngleY);
+                g_camera.position.z = g_camera.target.z + g_camDist * cos(g_camAngleX) * cos(g_camAngleY);
                 
                 g_mouseX = x; g_mouseY = y;
                 InvalidateRect(hwnd, NULL, FALSE);
@@ -318,17 +385,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_dragging = 0;
             ReleaseCapture();
             return 0;
+        case WM_MOUSEWHEEL:
+            {
+                int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+                g_camDist -= delta * 0.01f;
+                if(g_camDist < 2.0f) g_camDist = 2.0f;
+                if(g_camDist > 15.0f) g_camDist = 15.0f;
+                
+                g_camera.position.x = g_camera.target.x + g_camDist * sin(g_camAngleX) * cos(g_camAngleY);
+                g_camera.position.y = g_camera.target.y + g_camDist * sin(g_camAngleY);
+                g_camera.position.z = g_camera.target.z + g_camDist * cos(g_camAngleX) * cos(g_camAngleY);
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            return 0;
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC hdc = BeginPaint(hwnd, &ps);
             
             if(g_frameBuffer && !g_rendering) {
-                static unsigned char vgaBuffer[640*480];
-                for(int i = 0; i < 640*480; i++) {
-                    float r = g_frameBuffer[i*3+0] / 255.0f;
-                    float g = g_frameBuffer[i*3+1] / 255.0f;
-                    float b = g_frameBuffer[i*3+2] / 255.0f;
-                    vgaBuffer[i] = (unsigned char)rgbToVGA(r, g, b);
+                static unsigned char* vgaBuffer = NULL;
+                if(!vgaBuffer) vgaBuffer = (unsigned char*)malloc(640 * 480);
+                
+                // Downsample to 640x480 for VGA display
+                for(int y = 0; y < 480; y++) {
+                    for(int x = 0; x < 640; x++) {
+                        int sx = x * g_renderWidth / 640;
+                        int sy = y * g_renderHeight / 480;
+                        float r = g_frameBuffer[(sy * g_renderWidth + sx) * 3 + 0] / 255.0f;
+                        float g = g_frameBuffer[(sy * g_renderWidth + sx) * 3 + 1] / 255.0f;
+                        float b = g_frameBuffer[(sy * g_renderWidth + sx) * 3 + 2] / 255.0f;
+                        vgaBuffer[y * 640 + x] = (unsigned char)rgbToVGA(r, g, b);
+                    }
                 }
                 
                 HBITMAP hBitmap = CreateBitmap(640, 480, 1, 8, vgaBuffer);
@@ -357,6 +444,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DeleteObject(hPal);
             }
             
+            // Progress bar
             if(g_rendering) {
                 HBRUSH hBrush = CreateSolidBrush(RGB(0, 0, 0));
                 RECT rect = {200, 240, 440, 260};
@@ -379,9 +467,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
+// ============================================================================
+// MAIN
+// ============================================================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     initVGAPalette();
     
+    // Default scene
     g_spheres[0] = (Sphere){{0, 1.2, 0}, {0.92, 0.88, 0.82}, 0.9, 0.2};
     g_sphereCount = 1;
     g_lights[0] = (Light){{5, 8, 3}, {1, 0.95, 0.9}, 1};
@@ -396,7 +488,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     RegisterClass(&wc);
     
     g_hwnd = CreateWindowEx(0, "Phoix3DEditor", 
-        "Phoix 3D Editor | Drag to orbit | R=Reset",
+        "Phoix 3D Editor | Drag to orbit | Scroll zoom | R=Render HD | S=Save | F=Reset",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
         100, 100, 640, 480,
         NULL, NULL, hInstance, NULL);
