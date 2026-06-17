@@ -1,8 +1,8 @@
-name: Build 3DSoft.exe
+name: Build Phoix Suite
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -10,19 +10,26 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
     
-    - name: Install GCC
+    - name: Setup MinGW
       run: |
         choco install mingw -y
         echo "C:\mingw64\bin" >> $env:GITHUB_PATH
     
-    - name: Compile with GCC
+    - name: Build Phoix 3D Editor
       run: |
-        gcc -o 3dsoft.exe 3dsoft.c -lopengl32 -lglu32 -lm -mwindows
+        gcc -o phoix_editor.exe phoix_editor.c -lopengl32 -lglu32 -lgdi32 -lm -mwindows -O3 -Wall
     
-    - name: Upload EXE
+    - name: Build Phoix Render Engine
+      run: |
+        gcc -o phoix_renderer.exe phoix_renderer.c -lm -O3 -Wall
+    
+    - name: Upload all EXEs
       uses: actions/upload-artifact@v4
       with:
-        name: 3dsoft
-        path: 3dsoft.exe
+        name: phoix-suite
+        path: |
+          phoix_editor.exe
+          phoix_renderer.exe
