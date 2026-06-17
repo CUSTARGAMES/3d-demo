@@ -1,35 +1,20 @@
-name: Build Phoix Suite
+name: Build Phoix Editor
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
+    - uses: actions/checkout@v4
     - name: Setup MinGW
-      run: |
-        choco install mingw -y
-        echo "C:\mingw64\bin" >> $env:GITHUB_PATH
-    
-    - name: Build Phoix 3D Editor
-      run: |
-        gcc -o phoix_editor.exe phoix_editor.c -lopengl32 -lglu32 -lgdi32 -lm -mwindows -O3 -Wall
-    
-    - name: Build Phoix Render Engine
-      run: |
-        gcc -o phoix_renderer.exe phoix_renderer.c -lm -O3 -Wall
-    
-    - name: Upload all EXEs
-      uses: actions/upload-artifact@v4
+      run: choco install mingw -y
+    - name: Compile
+      run: gcc -o phoix_editor.exe phoix_editor.c -lopengl32 -lglu32 -lgdi32 -lm -mwindows -O3
+    - uses: actions/upload-artifact@v4
       with:
-        name: phoix-suite
-        path: |
-          phoix_editor.exe
-          phoix_renderer.exe
+        name: phoix-editor
+        path: phoix_editor.exe
