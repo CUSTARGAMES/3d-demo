@@ -22,7 +22,6 @@ RGBColor VGA_PALETTE[256] = {
     {255,85,85}, {255,85,255}, {255,255,85}, {255,255,255}
 };
 
-// Generate 6x6x6 color cube for remaining 240 colors
 void initVGAPalette() {
     int idx = 16;
     for(int r = 0; r < 6 && idx < 256; r++) {
@@ -99,7 +98,6 @@ typedef struct {
     float fov;
 } Camera;
 
-// Scene globals
 static Sphere g_spheres[MAX_OBJECTS];
 static int g_sphereCount = 0;
 static Triangle g_triangles[MAX_TRIANGLES];
@@ -110,77 +108,9 @@ static Camera g_camera = {{0, 1.5, 6}, {0, 1.2, 0}, 60};
 static unsigned char* g_frameBuffer = NULL;
 static int g_rendering = 0;
 static float g_renderProgress = 0;
-
-// Skybox
 static unsigned char* g_skyboxData = NULL;
 static int g_skyboxWidth = 0;
 static int g_skyboxHeight = 0;
-
-// ============================================================================
-// GLB MODEL LOADER (Simple)
-// ============================================================================
-int loadGLB(const char* filename) {
-    FILE* f = fopen(filename, "rb");
-    if(!f) return 0;
-    
-    // Read GLB header
-    unsigned int magic, version, length;
-    fread(&magic, 4, 1, f);
-    fread(&version, 4, 1, f);
-    fread(&length, 4, 1, f);
-    
-    if(magic != 0x46546C67) { // "glTF"
-        fclose(f);
-        return 0;
-    }
-    
-    // Skip to JSON chunk
-    unsigned int chunkLength, chunkType;
-    fread(&chunkLength, 4, 1, f);
-    fread(&chunkType, 4, 1, f);
-    
-    // Read JSON
-    char* jsonData = (char*)malloc(chunkLength + 1);
-    fread(jsonData, 1, chunkLength, f);
-    jsonData[chunkLength] = 0;
-    
-    // Simple parsing - just look for "position" data
-    // For now, just add a default sphere
-    fclose(f);
-    free(jsonData);
-    
-    // Add as sphere for now
-    g_spheres[g_sphereCount++] = (Sphere){{0, 1.2, 0}, {0.9, 0.85, 0.8}, 0.9, 0.2};
-    return 1;
-}
-
-// ============================================================================
-// SKYBOX LOADER
-// ============================================================================
-int loadSkybox(const char* filename) {
-    // Simple BMP loader for skybox
-    FILE* f = fopen(filename, "rb");
-    if(!f) return 0;
-    
-    BITMAPFILEHEADER bf;
-    BITMAPINFOHEADER bi;
-    fread(&bf, sizeof(bf), 1, f);
-    fread(&bi, sizeof(bi), 1, f);
-    
-    if(bf.bfType != 0x4D42) {
-        fclose(f);
-        return 0;
-    }
-    
-    g_skyboxWidth = bi.biWidth;
-    g_skyboxHeight = bi.biHeight;
-    g_skyboxData = (unsigned char*)malloc(g_skyboxWidth * g_skyboxHeight * 3);
-    
-    fseek(f, bf.bfOffBits, SEEK_SET);
-    fread(g_skyboxData, 3, g_skyboxWidth * g_skyboxHeight, f);
-    fclose(f);
-    return 1;
-}
 
 // ============================================================================
 // RAY TRACING ENGINE
@@ -227,11 +157,9 @@ Hit planeIntersect(Vec3 point, Vec3 normal, Vec3 origin, Vec3 dir) {
 Vec3 traceRay(Vec3 origin, Vec3 dir, int depth) {
     if(depth > 5) return vec3(0, 0, 0);
     
-    // Find closest hit
     Hit closest = {0};
     closest.t = 1e6;
     
-    // Check spheres
     for(int i = 0; i < g_sphereCount; i++) {
         Hit h = sphereIntersect(g_spheres[i], origin, dir);
         if(h.hit && h.t < closest.t) {
@@ -239,34 +167,25 @@ Vec3 traceRay(Vec3 origin, Vec3 dir, int depth) {
         }
     }
     
-    // Check floor
     Hit floorHit = planeIntersect(vec3(0, -0.2, 0), vec3(0, 1, 0), origin, dir);
     if(floorHit.hit && floorHit.t < closest.t) {
         closest = floorHit;
     }
     
     if(!closest.hit) {
-        // Sky
-        if(g_skyboxData) {
-            // Simple skybox mapping
-            return vec3(0.5, 0.6, 0.8);
-        }
         double t = 0.5 * (dir.y + 1.0);
         return vec3(0.02 + t*0.01, 0.03 + t*0.02, 0.12 + t*0.08);
     }
     
-    // Lighting
     Vec3 lightDir = normalize(sub(g_lights[0].pos, closest.point));
     double diff = fmax(0.1, dot(closest.normal, lightDir));
     
-    // Shadow
     Hit shadowHit = sphereIntersect(g_spheres[0], closest.point, lightDir);
     double shadow = (shadowHit.hit && shadowHit.t > 0.01) ? 0.4 : 1.0;
     diff *= shadow;
     
     Vec3 color;
     if(closest.isSphere) {
-        // Shiny sphere
         Vec3 sphereColor = vec3(0.92, 0.88, 0.82);
         Vec3 viewDir = normalize(mul(dir, -1));
         Vec3 reflectDir = normalize(sub(mul(lightDir, -1), mul(closest.normal, 2*dot(mul(lightDir, -1), closest.normal))));
@@ -274,16 +193,13 @@ Vec3 traceRay(Vec3 origin, Vec3 dir, int depth) {
         
         color = add(mul(sphereColor, diff * 0.85 + 0.15), mul(vec3(1,0.95,0.9), spec * 0.9 * shadow));
         
-        // Reflection
         Vec3 reflectDir2 = normalize(sub(dir, mul(closest.normal, 2*dot(dir, closest.normal))));
         Vec3 reflectColor = traceRay(closest.point, reflectDir2, depth + 1);
         color = add(color, mul(reflectColor, 0.5));
         
-        // Rim light
         double rim = pow(1 - fmax(0, dot(viewDir, closest.normal)), 3);
         color = add(color, mul(vec3(0.7, 0.5, 0.4), rim * 0.4));
     } else {
-        // Floor - checker
         int x = (int)floor(closest.point.x * 2.0);
         int z = (int)floor(closest.point.z * 2.0);
         if((x + z) % 2 == 0)
@@ -296,9 +212,6 @@ Vec3 traceRay(Vec3 origin, Vec3 dir, int depth) {
     return color;
 }
 
-// ============================================================================
-// RENDER FUNCTION
-// ============================================================================
 void renderScene() {
     if(g_rendering) return;
     g_rendering = 1;
@@ -330,7 +243,6 @@ void renderScene() {
             Vec3 rayDir = normalize(add(add(camDir, mul(camRight, u)), mul(camUp, v)));
             Vec3 color = traceRay(camPos, rayDir, 0);
             
-            // Clamp
             if(color.x > 1) color.x = 1; if(color.x < 0) color.x = 0;
             if(color.y > 1) color.y = 1; if(color.y < 0) color.y = 0;
             if(color.z > 1) color.z = 1; if(color.z < 0) color.z = 0;
@@ -367,42 +279,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_keys[wParam] = 1;
             if(wParam == VK_ESCAPE) PostQuitMessage(0);
             if(wParam == 'R') {
-                // Reset camera
                 g_camera.position = vec3(0, 1.5, 6);
                 g_camera.target = vec3(0, 1.2, 0);
                 renderScene();
-            }
-            if(wParam == 'F') {
-                // Load GLB model
-                OPENFILENAME ofn = {0};
-                char file[MAX_PATH] = {0};
-                ofn.lStructSize = sizeof(ofn);
-                ofn.hwndOwner = hwnd;
-                ofn.lpstrFilter = "GLB Files\0*.glb\0";
-                ofn.lpstrFile = file;
-                ofn.nMaxFile = MAX_PATH;
-                ofn.Flags = OFN_FILEMUSTEXIST;
-                
-                if(GetOpenFileName(&ofn)) {
-                    loadGLB(file);
-                    renderScene();
-                }
-            }
-            if(wParam == 'S') {
-                // Load skybox
-                OPENFILENAME ofn = {0};
-                char file[MAX_PATH] = {0};
-                ofn.lStructSize = sizeof(ofn);
-                ofn.hwndOwner = hwnd;
-                ofn.lpstrFilter = "BMP Files\0*.bmp\0";
-                ofn.lpstrFile = file;
-                ofn.nMaxFile = MAX_PATH;
-                ofn.Flags = OFN_FILEMUSTEXIST;
-                
-                if(GetOpenFileName(&ofn)) {
-                    loadSkybox(file);
-                    renderScene();
-                }
             }
             return 0;
         case WM_KEYUP:
@@ -415,13 +294,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 int dx = x - g_mouseX;
                 int dy = y - g_mouseY;
                 
-                // Orbit camera
                 g_camAngleX += dx * 0.005f;
                 g_camAngleY -= dy * 0.003f;
                 if(g_camAngleY > 1.4f) g_camAngleY = 1.4f;
                 if(g_camAngleY < -0.8f) g_camAngleY = -0.8f;
                 
-                // Update camera position
                 float dist = length(sub(g_camera.position, g_camera.target));
                 g_camera.position.x = g_camera.target.x + dist * sin(g_camAngleX) * cos(g_camAngleY);
                 g_camera.position.y = g_camera.target.y + dist * sin(g_camAngleY);
@@ -446,7 +323,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HDC hdc = BeginPaint(hwnd, &ps);
             
             if(g_frameBuffer && !g_rendering) {
-                // Convert to VGA palette and display
                 static unsigned char vgaBuffer[640*480];
                 for(int i = 0; i < 640*480; i++) {
                     float r = g_frameBuffer[i*3+0] / 255.0f;
@@ -455,12 +331,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                     vgaBuffer[i] = (unsigned char)rgbToVGA(r, g, b);
                 }
                 
-                // Create bitmap from VGA palette
                 HBITMAP hBitmap = CreateBitmap(640, 480, 1, 8, vgaBuffer);
                 HDC memDC = CreateCompatibleDC(hdc);
                 SelectObject(memDC, hBitmap);
                 
-                // Set palette
                 LOGPALETTE* pPal = (LOGPALETTE*)malloc(sizeof(LOGPALETTE) + 256 * sizeof(PALETTEENTRY));
                 pPal->palVersion = 0x300;
                 pPal->palNumEntries = 256;
@@ -483,7 +357,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 DeleteObject(hPal);
             }
             
-            // Progress bar
             if(g_rendering) {
                 HBRUSH hBrush = CreateSolidBrush(RGB(0, 0, 0));
                 RECT rect = {200, 240, 440, 260};
@@ -506,19 +379,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     initVGAPalette();
     
-    // Default scene
     g_spheres[0] = (Sphere){{0, 1.2, 0}, {0.92, 0.88, 0.82}, 0.9, 0.2};
     g_sphereCount = 1;
     g_lights[0] = (Light){{5, 8, 3}, {1, 0.95, 0.9}, 1};
     g_lightCount = 1;
     
-    // Register window
     WNDCLASS wc = {0};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
@@ -527,19 +395,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     RegisterClass(&wc);
     
-    // Create 640x480 window
     g_hwnd = CreateWindowEx(0, "Phoix3DEditor", 
-        "Phoix 3D Editor | Drag to orbit | F=Load GLB | S=Skybox | R=Reset",
+        "Phoix 3D Editor | Drag to orbit | R=Reset",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
         100, 100, 640, 480,
         NULL, NULL, hInstance, NULL);
     
     if(!g_hwnd) return 1;
     
-    // Initial render
     renderScene();
     
-    // Message loop
     MSG msg;
     while(GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
